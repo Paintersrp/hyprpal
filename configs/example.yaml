@@ -1,5 +1,6 @@
 # Launch hyprpal with `--dispatch=socket|hyprctl` to match your environment.
 managedWorkspaces:
+  # hyprpal will only touch workspaces listed here unless a rule opts out.
   - 3
   - 4
 modes:
@@ -19,12 +20,27 @@ modes:
               widthPercent: 25 # allowed range: 10-50
               match:
                 anyClass: [Slack, discord]
+      - name: Float design review on workspace 7
+        when:
+          all:
+            - mode: Coding
+            - workspace.id: 7
+            - app.class: Figma
+        allowUnmanaged: true # opt this rule into unmanaged workspace 7
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 7
+              side: left
+              widthPercent: 30
+              match:
+                class: Figma
   - name: Gaming
     rules:
       - name: Fullscreen active game
         when:
           mode: Gaming
-        allowUnmanaged: true
+        allowUnmanaged: true # let fullscreen apply on any workspace
         actions:
           - type: layout.fullscreen
             params:
