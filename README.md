@@ -14,7 +14,7 @@
    ```bash
    make run
    ```
-   Use `--dry-run` to preview dispatches without affecting windows.
+   Use `--dry-run` to preview dispatches without affecting windows. Pass `--dispatch=hyprctl` to force shelling out to `hyprctl` when the socket strategy is undesirable or unavailable.
 5. Follow logs while iterating:
    ```bash
    journalctl --user -fu hyprpal
@@ -97,7 +97,7 @@ modes:
               target: active
 ```
 
-Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads.
+Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads. Runtime flags such as `--dispatch=socket|hyprctl`, `--dry-run`, and `--log-level` let you adjust behavior without editing the config file.
 
 ## Makefile targets
 
