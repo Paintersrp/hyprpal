@@ -15,6 +15,11 @@
    make run
    ```
    Use `--dry-run` to preview dispatches without affecting windows. Pass `--dispatch=hyprctl` to force shelling out to `hyprctl` when the socket strategy is undesirable or unavailable.
+5. Need a quick snapshot without touching Hyprland? Use the smoke CLI to load the config, capture the current world, and preview the plan without dispatching anything:
+   ```bash
+   make smoke
+   ```
+   Override the mode or config path via `--mode`/`--config` when auditioning alternative setups.
 5. Follow logs while iterating (see [Troubleshooting & Logging](#troubleshooting--logging) for trace mode tips):
     ```bash
     journalctl --user -fu hyprpal
@@ -63,6 +68,18 @@ hsctl plan --explain
 ```
 
 When no actions are queued, `hsctl` prints `No pending actions`.
+
+## `smoke` world snapshot CLI
+
+`cmd/smoke` is a standalone helper that bootstraps the rule engine with a no-op dispatcher. It loads your configuration, captures a one-off world snapshot with the regular Hyprland queries, prints both structures, and evaluates the active mode to show the pending dispatches alongside the rule that generated them. Use it when iterating on YAML changes outside of Hyprland or when you want to verify predicate logic without letting the daemon mutate windows.
+
+Typical usage while editing a config:
+
+```bash
+go run ./cmd/smoke --config ~/.config/hyprpal/config.yaml --mode Coding --explain
+```
+
+The `--explain` flag (enabled by default) annotates each dispatch with its `mode:rule` source, mirroring `hsctl plan --explain`. Predicate traces are also printed so you can understand why a rule matched or skipped.
 
 ## Configuration
 
@@ -147,6 +164,7 @@ Pair `--log-level=trace` with `--dry-run` to audition rules without moving windo
 
 - `make build` – compile to `bin/hyprpal`.
 - `make run` – run the daemon against `configs/example.yaml`.
+- `make smoke` – run the smoke CLI to inspect the current world snapshot against `configs/example.yaml`.
 - `make install` – install the binary to `~/.local/bin` (override with `INSTALL_DIR=...`).
 - `make service` – reload and start the user service.
 - `make lint` – run `go vet` plus a `gofmt` check.
