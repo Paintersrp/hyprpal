@@ -77,6 +77,13 @@ func (b *batchHyprctl) DispatchBatch(commands [][]string) error {
 	return nil
 }
 
+func clearCooldown(t *testing.T, eng *Engine, key string) {
+	t.Helper()
+	eng.mu.Lock()
+	delete(eng.cooldown, key)
+	eng.mu.Unlock()
+}
+
 func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 	hypr := &fakeHyprctl{
 		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
@@ -177,5 +184,109 @@ func TestReconcileUsesBatchDispatcherWhenAvailable(t *testing.T) {
 	}
 	if len(base.dispatched) != 2 {
 		t.Fatalf("expected two dispatched commands, got %d", len(base.dispatched))
+	}
+}
+
+func TestRuleExecutionTrackingAllowsNormalFlow(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:client")
+	rule := rules.Rule{
+		Name:    "burst",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch, got %d", len(hypr.dispatched))
+	}
+	if strings.Contains(logs.String(), "temporarily disabled") {
+		t.Fatalf("unexpected temporary disable log: %s", logs.String())
+	}
+}
+
+func TestRuleExecutionTrackingBelowThreshold(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:client")
+	rule := rules.Rule{
+		Name:    "burst",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	key := mode.Name + ":" + rule.Name
+
+	for i := 0; i < ruleBurstThreshold; i++ {
+		if err := eng.reconcileAndApply(context.Background()); err != nil {
+			t.Fatalf("reconcileAndApply call %d returned error: %v", i+1, err)
+		}
+		clearCooldown(t, eng, key)
+	}
+
+	if len(hypr.dispatched) != ruleBurstThreshold {
+		t.Fatalf("expected %d dispatches, got %d", ruleBurstThreshold, len(hypr.dispatched))
+	}
+	if strings.Contains(logs.String(), "temporarily disabled") {
+		t.Fatalf("unexpected temporary disable log: %s", logs.String())
+	}
+}
+
+func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:client")
+	rule := rules.Rule{
+		Name:    "burst",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	key := mode.Name + ":" + rule.Name
+
+	for i := 0; i < ruleBurstThreshold; i++ {
+		if err := eng.reconcileAndApply(context.Background()); err != nil {
+			t.Fatalf("reconcileAndApply call %d returned error: %v", i+1, err)
+		}
+		clearCooldown(t, eng, key)
+	}
+
+	logs.Reset()
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("final reconcileAndApply returned error: %v", err)
+	}
+	if !strings.Contains(logs.String(), "temporarily disabled") {
+		t.Fatalf("expected temporary disable log, got %s", logs.String())
+	}
+	if len(hypr.dispatched) != ruleBurstThreshold {
+		t.Fatalf("expected %d dispatches after throttling, got %d", ruleBurstThreshold, len(hypr.dispatched))
+	}
+	eng.mu.Lock()
+	cooldownUntil := eng.cooldown[key]
+	eng.mu.Unlock()
+	if cooldownUntil.Before(time.Now()) {
+		t.Fatalf("expected cooldown to be in the future, got %v", cooldownUntil)
 	}
 }
