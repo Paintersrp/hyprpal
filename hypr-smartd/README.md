@@ -1,0 +1,94 @@
+# hypr-smartd
+
+`hypr-smartd` is a small companion daemon for [Hyprland](https://hyprland.org/) that listens to compositor events, maintains a live world snapshot of monitors/workspaces/clients, and applies declarative layout rules. v0.1 ships with sidecar docking and fullscreen enforcement actions so you can keep communication apps docked while focusing on your main workspace or go distraction-free in Gaming mode.
+
+## Quick Start
+
+1. Ensure Hyprland is running and `hyprctl` is available on your `$PATH`.
+2. Build the daemon:
+   ```bash
+   make build
+   ```
+3. Copy `configs/example.yaml` to `~/.config/hypr-smartd/config.yaml` and edit it for your workspace/app names.
+4. Run the daemon from your session:
+   ```bash
+   make run
+   ```
+   Use `--dry-run` to preview dispatches without affecting windows.
+
+## Configuration
+
+Configuration is YAML with modes, rules, and actions. A condensed example:
+
+```yaml
+modes:
+  - name: Coding
+    rules:
+      - name: Dock comms on workspace 3
+        when:
+          all:
+            - mode: Coding
+            - workspace.id: 3
+            - apps.present: [Slack, discord]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 3
+              side: right
+              widthPercent: 25
+              match:
+                anyClass: [Slack, discord]
+  - name: Gaming
+    rules:
+      - name: Fullscreen active game
+        when:
+          mode: Gaming
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: active
+```
+
+Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the provided systemd unit. Send `SIGHUP` (e.g. `systemctl --user reload hypr-smartd`) to reload without restarting.
+
+## Makefile targets
+
+- `make build` – compile to `bin/hypr-smartd`.
+- `make run` – run the daemon against `configs/example.yaml`.
+- `make install` – install the binary to your Go `$GOBIN`.
+- `make service` – reload and start the user service.
+- `make lint` – run `go vet` plus a `gofmt` check.
+- `make test` – execute unit tests.
+
+## Systemd (user) service
+
+Install the binary with `make install`, copy `system/hypr-smartd.service` to `~/.config/systemd/user/`, then enable it:
+
+```bash
+mkdir -p ~/.config/systemd/user/
+cp system/hypr-smartd.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hypr-smartd.service
+journalctl --user -fu hypr-smartd
+```
+
+## Acceptance smoke test
+
+1. Start Hyprland and open Slack/Discord plus your editor on workspace 3.
+2. Run `hypr-smartd --mode Coding`.
+3. Observe a log similar to:
+   ```
+   [INFO] DRY-RUN dispatch: [setfloatingaddress address:0xabc 1]
+   [INFO] DRY-RUN dispatch: [movewindowpixel exact 0 0]
+   [INFO] DRY-RUN dispatch: [resizewindowpixel exact 480 1440]
+   ```
+4. Re-run without `--dry-run` to apply the sidecar.
+5. Switch to Gaming mode (`hypr-smartd --mode Gaming`) and launch a game window; it will be forced fullscreen.
+
+## Roadmap (v0.1 → v0.2)
+
+- Grid layout primitive and Coding mode demo.
+- Hot reload config watcher plus richer error reporting.
+- Replace `hyprctl` shell-outs with direct socket IPC for lower latency.
+- Add `hsctl` CLI helper for mode inspection and manual actions.
+- Guardrails for loop protection and managed-workspace scoping.
