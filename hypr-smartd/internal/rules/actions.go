@@ -8,11 +8,14 @@ import (
 	"github.com/hyprpal/hypr-smartd/internal/config"
 	"github.com/hyprpal/hypr-smartd/internal/layout"
 	"github.com/hyprpal/hypr-smartd/internal/state"
+	"github.com/hyprpal/hypr-smartd/internal/util"
 )
 
 // ActionContext is passed to action planners.
 type ActionContext struct {
-	World *state.World
+	World    *state.World
+	Logger   *util.Logger
+	RuleName string
 }
 
 // Action produces layout operations for a rule.
@@ -176,6 +179,9 @@ func (a *SidecarDockAction) Plan(ctx ActionContext) (layout.Plan, error) {
 	}
 	_, dock := layout.SplitSidecar(monitor.Rectangle, a.Side, a.WidthPercent)
 	if layout.ApproximatelyEqual(target.Geometry, dock) {
+		if ctx.Logger != nil {
+			ctx.Logger.Infof("rule %s skipped (idempotent)", ctx.RuleName)
+		}
 		return layout.Plan{}, nil
 	}
 	plan := layout.FloatAndPlace(target.Address, dock)
@@ -203,6 +209,9 @@ func (a *FullscreenAction) Plan(ctx ActionContext) (layout.Plan, error) {
 		return layout.Plan{}, nil
 	}
 	if client.FullscreenMode != 0 {
+		if ctx.Logger != nil {
+			ctx.Logger.Infof("rule %s skipped (idempotent)", ctx.RuleName)
+		}
 		return layout.Plan{}, nil
 	}
 	plan := layout.Fullscreen(client.Address, true)
