@@ -15,6 +15,10 @@
    make run
    ```
    Use `--dry-run` to preview dispatches without affecting windows.
+5. Follow logs while iterating:
+   ```bash
+   journalctl --user -fu hypr-smartd
+   ```
 
 ## Configuration
 
