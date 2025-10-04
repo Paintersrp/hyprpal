@@ -9,11 +9,54 @@ import (
 
 // Config is the top-level configuration document.
 type Config struct {
-	ManagedWorkspaces    []int        `yaml:"managedWorkspaces"`
-	Modes                []ModeConfig `yaml:"modes"`
-	RedactTitles         bool         `yaml:"redactTitles"`
-	Gaps                 Gaps         `yaml:"gaps"`
-	PlacementTolerancePx float64      `yaml:"placementTolerancePx"`
+	ManagedWorkspaces    []int           `yaml:"managedWorkspaces"`
+	Modes                []ModeConfig    `yaml:"modes"`
+	RedactTitles         bool            `yaml:"redactTitles"`
+	Gaps                 Gaps            `yaml:"gaps"`
+	PlacementTolerancePx float64         `yaml:"placementTolerancePx"`
+	Profiles             MatcherProfiles `yaml:"profiles"`
+}
+
+// MatcherProfiles defines reusable client matcher templates by name.
+type MatcherProfiles map[string]MatcherConfig
+
+// UnmarshalYAML ensures profile names are unique and values are parsed correctly.
+func (p *MatcherProfiles) UnmarshalYAML(value *yaml.Node) error {
+	if value == nil {
+		*p = nil
+		return nil
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("profiles must be a mapping")
+	}
+	result := make(map[string]MatcherConfig, len(value.Content)/2)
+	seen := map[string]struct{}{}
+	for i := 0; i < len(value.Content); i += 2 {
+		keyNode := value.Content[i]
+		valNode := value.Content[i+1]
+		if keyNode.Kind != yaml.ScalarNode {
+			return fmt.Errorf("profile name must be a string")
+		}
+		name := keyNode.Value
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("duplicate profile %q", name)
+		}
+		seen[name] = struct{}{}
+		var cfg MatcherConfig
+		if err := valNode.Decode(&cfg); err != nil {
+			return fmt.Errorf("profile %q: %w", name, err)
+		}
+		result[name] = cfg
+	}
+	*p = result
+	return nil
+}
+
+// MatcherConfig describes a reusable client matcher.
+type MatcherConfig struct {
+	Class      string   `yaml:"class"`
+	AnyClass   []string `yaml:"anyClass"`
+	TitleRegex string   `yaml:"titleRegex"`
 }
 
 // Gaps describes inner and outer gaps applied during layout planning.
@@ -93,6 +136,11 @@ func (c *Config) Validate() error {
 	if c.PlacementTolerancePx < 0 {
 		return fmt.Errorf("placementTolerancePx cannot be negative")
 	}
+	for name, profile := range c.Profiles {
+		if err := profile.Validate(); err != nil {
+			return fmt.Errorf("profile %q: %w", name, err)
+		}
+	}
 	managed := map[int]struct{}{}
 	for _, ws := range c.ManagedWorkspaces {
 		if ws <= 0 {
@@ -119,7 +167,43 @@ func (c *Config) Validate() error {
 			if len(r.Actions) == 0 {
 				return fmt.Errorf("rule %q in mode %q must define actions", r.Name, m.Name)
 			}
+			if err := c.validateMatcherReferences(m.Name, r); err != nil {
+				return err
+			}
 		}
+	}
+	return nil
+}
+
+func (c *Config) validateMatcherReferences(mode string, rule RuleConfig) error {
+	for _, action := range rule.Actions {
+		matchVal, ok := action.Params["match"]
+		if !ok || matchVal == nil {
+			continue
+		}
+		matchMap, ok := matchVal.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("rule %q in mode %q: match must be a mapping", rule.Name, mode)
+		}
+		profileNameRaw, ok := matchMap["profile"]
+		if !ok {
+			continue
+		}
+		profileName, ok := profileNameRaw.(string)
+		if !ok {
+			return fmt.Errorf("rule %q in mode %q: match.profile must be a string", rule.Name, mode)
+		}
+		if _, exists := c.Profiles[profileName]; !exists {
+			return fmt.Errorf("rule %q in mode %q references unknown profile %q", rule.Name, mode, profileName)
+		}
+	}
+	return nil
+}
+
+// Validate ensures matcher configuration has at least one selection criteria.
+func (m MatcherConfig) Validate() error {
+	if m.Class == "" && len(m.AnyClass) == 0 && m.TitleRegex == "" {
+		return fmt.Errorf("must define class, anyClass, or titleRegex")
 	}
 	return nil
 }

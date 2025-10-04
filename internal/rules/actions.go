@@ -39,18 +39,18 @@ type Action interface {
 }
 
 // BuildActions compiles config actions.
-func BuildActions(cfgs []config.ActionConfig) ([]Action, error) {
+func BuildActions(cfgs []config.ActionConfig, profiles map[string]config.MatcherConfig) ([]Action, error) {
 	actions := make([]Action, 0, len(cfgs))
 	for _, ac := range cfgs {
 		switch ac.Type {
 		case "layout.sidecarDock":
-			action, err := buildSidecarDock(ac.Params)
+			action, err := buildSidecarDock(ac.Params, profiles)
 			if err != nil {
 				return nil, fmt.Errorf("sidecarDock: %w", err)
 			}
 			actions = append(actions, action)
 		case "layout.fullscreen":
-			action, err := buildFullscreen(ac.Params)
+			action, err := buildFullscreen(ac.Params, profiles)
 			if err != nil {
 				return nil, fmt.Errorf("fullscreen: %w", err)
 			}
@@ -85,7 +85,7 @@ type FullscreenAction struct {
 	Match  clientMatcher
 }
 
-func buildSidecarDock(params map[string]interface{}) (Action, error) {
+func buildSidecarDock(params map[string]interface{}, profiles map[string]config.MatcherConfig) (Action, error) {
 	workspace, err := intFrom(params, "workspace")
 	if err != nil {
 		return nil, err
@@ -108,26 +108,26 @@ func buildSidecarDock(params map[string]interface{}) (Action, error) {
 	if width > 50 {
 		return nil, fmt.Errorf("widthPercent must be at most 50, got %v", width)
 	}
-	matcher, err := parseClientMatcher(params["match"])
+	matcher, err := parseClientMatcher(params["match"], profiles)
 	if err != nil {
 		return nil, err
 	}
 	return &SidecarDockAction{WorkspaceID: workspace, Side: side, WidthPercent: width, Match: matcher}, nil
 }
 
-func buildFullscreen(params map[string]interface{}) (Action, error) {
+func buildFullscreen(params map[string]interface{}, profiles map[string]config.MatcherConfig) (Action, error) {
 	target, _ := stringFrom(params, "target")
 	if target == "" {
 		target = "active"
 	}
-	matcher, err := parseClientMatcher(params["match"])
+	matcher, err := parseClientMatcher(params["match"], profiles)
 	if err != nil {
 		return nil, err
 	}
 	return &FullscreenAction{Target: target, Match: matcher}, nil
 }
 
-func parseClientMatcher(v interface{}) (clientMatcher, error) {
+func parseClientMatcher(v interface{}, profiles map[string]config.MatcherConfig) (clientMatcher, error) {
 	if v == nil {
 		return func(state.Client) bool { return true }, nil
 	}
@@ -135,38 +135,91 @@ func parseClientMatcher(v interface{}) (clientMatcher, error) {
 	if !ok {
 		return nil, fmt.Errorf("match must be a mapping")
 	}
-	if cls, ok := m["class"]; ok {
-		s, err := assertString(cls)
+	if profileName, ok := m["profile"]; ok {
+		name, err := assertString(profileName)
 		if err != nil {
 			return nil, err
 		}
-		expected := strings.ToLower(s)
-		return func(c state.Client) bool { return strings.ToLower(c.Class) == expected }, nil
+		profile, exists := profiles[name]
+		if !exists {
+			return nil, fmt.Errorf("unknown match profile %q", name)
+		}
+		return matcherFromConfig(profile)
+	}
+	if _, ok := m["class"]; ok {
+		cfg, err := matcherConfigFromMap(m)
+		if err != nil {
+			return nil, err
+		}
+		return matcherFromConfig(cfg)
+	}
+	if _, ok := m["anyClass"]; ok {
+		cfg, err := matcherConfigFromMap(m)
+		if err != nil {
+			return nil, err
+		}
+		return matcherFromConfig(cfg)
+	}
+	if _, ok := m["titleRegex"]; ok {
+		cfg, err := matcherConfigFromMap(m)
+		if err != nil {
+			return nil, err
+		}
+		return matcherFromConfig(cfg)
+	}
+	return nil, fmt.Errorf("match requires class, anyClass, or titleRegex")
+}
+
+func matcherConfigFromMap(m map[string]interface{}) (config.MatcherConfig, error) {
+	var cfg config.MatcherConfig
+	if cls, ok := m["class"]; ok {
+		s, err := assertString(cls)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Class = s
 	}
 	if any, ok := m["anyClass"]; ok {
 		list, ok := any.([]interface{})
 		if !ok {
-			return nil, fmt.Errorf("anyClass must be a list")
+			return cfg, fmt.Errorf("anyClass must be a list")
 		}
-		set := map[string]struct{}{}
+		cfg.AnyClass = make([]string, 0, len(list))
 		for _, item := range list {
 			str, err := assertString(item)
 			if err != nil {
-				return nil, err
+				return cfg, err
 			}
-			set[strings.ToLower(str)] = struct{}{}
+			cfg.AnyClass = append(cfg.AnyClass, str)
+		}
+	}
+	if rgxVal, ok := m["titleRegex"]; ok {
+		str, err := assertString(rgxVal)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.TitleRegex = str
+	}
+	return cfg, nil
+}
+
+func matcherFromConfig(cfg config.MatcherConfig) (clientMatcher, error) {
+	if cfg.Class != "" {
+		expected := strings.ToLower(cfg.Class)
+		return func(c state.Client) bool { return strings.ToLower(c.Class) == expected }, nil
+	}
+	if len(cfg.AnyClass) > 0 {
+		set := map[string]struct{}{}
+		for _, item := range cfg.AnyClass {
+			set[strings.ToLower(item)] = struct{}{}
 		}
 		return func(c state.Client) bool {
 			_, ok := set[strings.ToLower(c.Class)]
 			return ok
 		}, nil
 	}
-	if rgxVal, ok := m["titleRegex"]; ok {
-		str, err := assertString(rgxVal)
-		if err != nil {
-			return nil, err
-		}
-		re, err := regexp.Compile(str)
+	if cfg.TitleRegex != "" {
+		re, err := regexp.Compile(cfg.TitleRegex)
 		if err != nil {
 			return nil, fmt.Errorf("compile match.titleRegex: %w", err)
 		}

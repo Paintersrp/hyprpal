@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hyprpal/hyprpal/internal/config"
 	"github.com/hyprpal/hyprpal/internal/layout"
 	"github.com/hyprpal/hyprpal/internal/state"
 	"github.com/hyprpal/hyprpal/internal/util"
@@ -15,7 +16,7 @@ func TestBuildSidecarDockRejectsNarrowWidth(t *testing.T) {
 		"workspace":    1,
 		"widthPercent": 5,
 		"side":         "left",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatalf("expected error for widthPercent below minimum")
 	}
@@ -26,7 +27,7 @@ func TestBuildSidecarDockRejectsWideWidth(t *testing.T) {
 		"workspace":    1,
 		"widthPercent": 60,
 		"side":         "right",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatalf("expected error for widthPercent above maximum")
 	}
@@ -198,5 +199,24 @@ func TestFullscreenPlanAllowsWhenOptedIn(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "unmanaged") {
 		t.Fatalf("unexpected unmanaged log when allowUnmanaged is true: %q", buf.String())
+	}
+}
+
+func TestParseClientMatcherProfile(t *testing.T) {
+	profiles := map[string]config.MatcherConfig{
+		"comms": {AnyClass: []string{"Slack", "discord"}},
+	}
+
+	matcher, err := parseClientMatcher(map[string]interface{}{"profile": "comms"}, profiles)
+	if err != nil {
+		t.Fatalf("parseClientMatcher returned error: %v", err)
+	}
+
+	if !matcher(state.Client{Class: "Slack"}) {
+		t.Fatalf("expected matcher to match profile class")
+	}
+
+	if matcher(state.Client{Class: "Firefox"}) {
+		t.Fatalf("expected matcher to reject non-profile class")
 	}
 }
