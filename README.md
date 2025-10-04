@@ -69,6 +69,9 @@ When no actions are queued, `hsctl` prints `No pending actions`.
 Configuration is YAML with modes, rules, and actions. A condensed example:
 
 ```yaml
+managedWorkspaces:
+  - 3
+  - 4
 modes:
   - name: Coding
     rules:
@@ -97,7 +100,16 @@ modes:
               target: active
 ```
 
-Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads. Runtime flags such as `--dispatch=socket|hyprctl`, `--dry-run`, and `--log-level` let you adjust behavior without editing the config file.
+Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `managedWorkspaces` scopes hyprpal’s actions to the listed workspace IDs by default—rules will be skipped elsewhere unless they set `allowUnmanaged: true`. Leaving the list empty allows every workspace to be managed. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads. Runtime flags such as `--dispatch=socket|hyprctl`, `--dry-run`, `--log-level`, and `--mode` let you adjust behavior without editing the config file.
+
+## Guardrails: loop protection & workspace scoping
+
+hyprpal keeps a few safety rails in place so layout automation can be tested without accidentally spamming Hyprland:
+
+- **Rule loop protection.** Each unique rule/plan signature may execute at most three times within a five-second sliding window. When the threshold is exceeded, hyprpal applies a five-second cooldown and logs a warning similar to `rule Dock comms temporarily disabled after 3 executions in 5s [mode Coding]`. Use `--log-level=debug` (or watch `journalctl` for warnings) while iterating to confirm the guard trips when you induce a loop; the log entry lets you verify the plan signature and timing.
+- **Managed workspace allow-list.** The new root-level `managedWorkspaces` array defines the workspace IDs hyprpal is allowed to manipulate. Actions automatically skip unmanaged workspaces and emit an info-level log when they do so. Individual rules can opt out by adding `allowUnmanaged: true`, making it easy to run a focused rule (e.g. forcing fullscreen for the active game) without broadening the global allow-list.
+
+During dry runs (`--dry-run`), these guardrails still apply. Combine `--dry-run` with `--log-level=debug` to observe skipped rules, cooldown activation, and managed-workspace checks before enabling live dispatches.
 
 ## Makefile targets
 
