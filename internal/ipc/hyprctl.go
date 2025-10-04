@@ -10,6 +10,7 @@ import (
 
 	"github.com/hyprpal/hyprpal/internal/layout"
 	"github.com/hyprpal/hyprpal/internal/state"
+	"github.com/hyprpal/hyprpal/internal/util"
 )
 
 // Client wraps hyprctl shell-outs.
@@ -201,3 +202,57 @@ func (c *Client) Dispatch(args ...string) error {
 
 var _ state.DataSource = (*Client)(nil)
 var _ layout.Dispatcher = (*Client)(nil)
+
+// DispatchStrategy describes how dispatch commands are issued to Hyprland.
+type DispatchStrategy string
+
+const (
+	// DispatchStrategySocket uses the Hyprland command socket directly.
+	DispatchStrategySocket DispatchStrategy = "socket"
+	// DispatchStrategyHyprctl shells out to the hyprctl binary.
+	DispatchStrategyHyprctl DispatchStrategy = "hyprctl"
+)
+
+// EngineClient exposes a dispatcher strategy backed by the hyprctl data source.
+type EngineClient struct {
+	*Client
+	dispatcher layout.Dispatcher
+}
+
+// Dispatch forwards dispatch requests to the active dispatcher.
+func (c *EngineClient) Dispatch(args ...string) error {
+	if c.dispatcher != nil {
+		return c.dispatcher.Dispatch(args...)
+	}
+	return c.Client.Dispatch(args...)
+}
+
+// DispatchBatch attempts to batch dispatches when supported by the active dispatcher.
+func (c *EngineClient) DispatchBatch(commands [][]string) error {
+	if c.dispatcher == nil {
+		return layout.ErrBatchUnsupported
+	}
+	if batcher, ok := c.dispatcher.(layout.BatchDispatcher); ok {
+		return batcher.DispatchBatch(commands)
+	}
+	return layout.ErrBatchUnsupported
+}
+
+// NewEngineClient returns a client suitable for the engine, preferring the socket dispatcher.
+func NewEngineClient(logger *util.Logger) (*EngineClient, DispatchStrategy) {
+	base := NewClient()
+	disp, err := newSocketDispatcher()
+	if err != nil {
+		if logger != nil {
+			logger.Debugf("using hyprctl dispatch: %v", err)
+		}
+		return &EngineClient{Client: base}, DispatchStrategyHyprctl
+	}
+	if logger != nil {
+		logger.Debugf("using socket dispatch at %s", disp.DispatchSocketPath())
+	}
+	return &EngineClient{Client: base, dispatcher: disp}, DispatchStrategySocket
+}
+
+var _ layout.Dispatcher = (*EngineClient)(nil)
+var _ layout.BatchDispatcher = (*EngineClient)(nil)

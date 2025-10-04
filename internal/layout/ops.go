@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -9,6 +10,15 @@ import (
 type Dispatcher interface {
 	Dispatch(args ...string) error
 }
+
+// BatchDispatcher allows issuing multiple dispatch commands in a single operation.
+type BatchDispatcher interface {
+	Dispatch(args ...string) error
+	DispatchBatch(commands [][]string) error
+}
+
+// ErrBatchUnsupported signals that the dispatcher cannot perform batch dispatches.
+var ErrBatchUnsupported = errors.New("batch dispatch unsupported")
 
 // Plan is a collection of sequential hyprctl dispatch commands.
 type Plan struct {
@@ -56,6 +66,16 @@ func Fullscreen(address string, enable bool) Plan {
 
 // Execute applies the plan sequentially using dispatcher.
 func (p Plan) Execute(d Dispatcher) error {
+	if batcher, ok := d.(BatchDispatcher); ok {
+		if err := batcher.DispatchBatch(p.Commands); err == nil {
+			return nil
+		} else if !errors.Is(err, ErrBatchUnsupported) {
+			if len(p.Commands) > 0 {
+				return fmt.Errorf("batch dispatch failed: %w", err)
+			}
+			return err
+		}
+	}
 	for _, cmd := range p.Commands {
 		if err := d.Dispatch(cmd...); err != nil {
 			return fmt.Errorf("dispatch %s: %w", strings.Join(cmd, " "), err)
