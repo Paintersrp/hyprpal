@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/hyprpal/hyprpal/internal/engine"
+	"github.com/hyprpal/hyprpal/internal/state"
 	"github.com/hyprpal/hyprpal/internal/util"
 )
 
@@ -144,6 +145,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		s.handleReload(conn)
 	case ActionPlan:
 		s.handlePlan(ctx, conn, req.Params)
+	case ActionInspect:
+		s.handleInspect(conn)
 	default:
 		s.writeError(conn, fmt.Errorf("unknown action %q", req.Action))
 	}
@@ -197,6 +200,20 @@ func (s *Server) handlePlan(ctx context.Context, conn net.Conn, params map[strin
 		})
 	}
 	s.writeOK(conn, result)
+}
+
+func (s *Server) handleInspect(conn net.Conn) {
+	payload := struct {
+		Mode  ModeStatus   `json:"mode"`
+		World *state.World `json:"world"`
+	}{
+		Mode: ModeStatus{
+			Active:    s.engine.ActiveMode(),
+			Available: s.engine.AvailableModes(),
+		},
+		World: state.CloneWorld(s.engine.LastWorld()),
+	}
+	s.writeOK(conn, payload)
 }
 
 func (s *Server) writeOK(conn net.Conn, data any) {

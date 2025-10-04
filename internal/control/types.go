@@ -14,7 +14,8 @@ const (
 	ActionModeGet = "mode.get"
 	ActionModeSet = "mode.set"
 	ActionReload  = "reload"
-	ActionPlan    = "plan"
+        ActionPlan    = "plan"
+        ActionInspect = "inspect"
 
 	// Response statuses.
 	StatusOK    = "ok"

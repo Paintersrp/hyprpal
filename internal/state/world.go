@@ -149,3 +149,21 @@ func (w *World) MonitorForWorkspace(id int) (*Monitor, error) {
 	}
 	return mon, nil
 }
+
+// CloneWorld returns a deep copy of the provided world snapshot.
+func CloneWorld(src *World) *World {
+	if src == nil {
+		return nil
+	}
+	copyWorld := *src
+	if len(src.Clients) > 0 {
+		copyWorld.Clients = append([]Client(nil), src.Clients...)
+	}
+	if len(src.Workspaces) > 0 {
+		copyWorld.Workspaces = append([]Workspace(nil), src.Workspaces...)
+	}
+	if len(src.Monitors) > 0 {
+		copyWorld.Monitors = append([]Monitor(nil), src.Monitors...)
+	}
+	return &copyWorld
+}
