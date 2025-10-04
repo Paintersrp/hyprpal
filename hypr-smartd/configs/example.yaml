@@ -1,0 +1,35 @@
+modes:
+  - name: Coding
+    rules:
+      - name: Dock comms on workspace 3
+        when:
+          all:
+            - mode: Coding
+            - workspace.id: 3
+            - apps.present: [Slack, discord]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 3
+              side: right
+              widthPercent: 25
+              match:
+                anyClass: [Slack, discord]
+  - name: Gaming
+    rules:
+      - name: Fullscreen active game
+        when:
+          mode: Gaming
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: active
+      - name: Force fullscreen for games
+        when:
+          mode: Gaming
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: match
+              match:
+                titleRegex: "(Proton|Steam|Game)"
