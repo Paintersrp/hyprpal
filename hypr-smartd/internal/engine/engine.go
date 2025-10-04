@@ -122,13 +122,19 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	}
 	e.mu.Lock()
 	e.lastWorld = world
-	mode := e.modes[e.activeMode]
+	activeMode := e.activeMode
+	mode, ok := e.modes[activeMode]
 	e.mu.Unlock()
+
+	if !ok {
+		e.logger.Warnf("no active mode selected; skipping apply")
+		return nil
+	}
 
 	plan := layout.Plan{}
 	now := time.Now()
 	for _, rule := range mode.Rules {
-		key := e.activeMode + ":" + rule.Name
+		key := activeMode + ":" + rule.Name
 		e.mu.Lock()
 		last := e.debounce[key]
 		e.mu.Unlock()
