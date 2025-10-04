@@ -27,10 +27,11 @@ type Engine struct {
 	hyprctl hyprctlClient
 	logger  *util.Logger
 
-	modes      map[string]rules.Mode
-	modeOrder  []string
-	activeMode string
-	dryRun     bool
+	modes        map[string]rules.Mode
+	modeOrder    []string
+	activeMode   string
+	dryRun       bool
+	redactTitles bool
 
 	mu          sync.Mutex
 	debounce    map[string]time.Time
@@ -60,7 +61,7 @@ type PlannedCommand struct {
 }
 
 // New creates a new engine instance.
-func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool) *Engine {
+func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool) *Engine {
 	modeMap := make(map[string]rules.Mode)
 	order := make([]string, 0, len(modes))
 	for _, m := range modes {
@@ -72,15 +73,16 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		active = order[0]
 	}
 	return &Engine{
-		hyprctl:     hyprctl,
-		logger:      logger,
-		modes:       modeMap,
-		modeOrder:   order,
-		activeMode:  active,
-		dryRun:      dryRun,
-		debounce:    make(map[string]time.Time),
-		cooldown:    make(map[string]time.Time),
-		execHistory: make(map[string][]time.Time),
+		hyprctl:      hyprctl,
+		logger:       logger,
+		modes:        modeMap,
+		modeOrder:    order,
+		activeMode:   active,
+		dryRun:       dryRun,
+		redactTitles: redactTitles,
+		debounce:     make(map[string]time.Time),
+		cooldown:     make(map[string]time.Time),
+		execHistory:  make(map[string][]time.Time),
 	}
 }
 
@@ -133,6 +135,20 @@ func (e *Engine) SetMode(name string) error {
 	return nil
 }
 
+// SetRedactTitles toggles client title redaction at runtime.
+func (e *Engine) SetRedactTitles(enabled bool) {
+	e.mu.Lock()
+	e.redactTitles = enabled
+	e.mu.Unlock()
+}
+
+func (e *Engine) redactTitlesEnabled() bool {
+	e.mu.Lock()
+	enabled := e.redactTitles
+	e.mu.Unlock()
+	return enabled
+}
+
 // Run starts the engine loop until context cancellation.
 func (e *Engine) Run(ctx context.Context) error {
 	if err := e.reconcileAndApply(ctx); err != nil {
@@ -150,9 +166,13 @@ func (e *Engine) Run(ctx context.Context) error {
 			if !ok {
 				return fmt.Errorf("event stream closed")
 			}
+			payload := ev.Payload
+			if e.redactTitlesEnabled() && payload != "" {
+				payload = redactedTitle
+			}
 			e.trace("event.received", map[string]any{
 				"kind":    ev.Kind,
-				"payload": ev.Payload,
+				"payload": payload,
 			})
 			if e.isInteresting(ev.Kind) {
 				if err := e.reconcileAndApply(ctx); err != nil {
@@ -174,21 +194,27 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	redact := e.redactTitlesEnabled()
+	storedWorld := world
+	if redact {
+		storedWorld = cloneWorld(world)
+		redactWorldTitles(storedWorld)
+	}
 	e.mu.Lock()
 	prev := e.lastWorld
-	e.lastWorld = world
+	e.lastWorld = storedWorld
 	e.mu.Unlock()
 
 	counts := map[string]int{
-		"clients":    len(world.Clients),
-		"workspaces": len(world.Workspaces),
-		"monitors":   len(world.Monitors),
+		"clients":    len(storedWorld.Clients),
+		"workspaces": len(storedWorld.Workspaces),
+		"monitors":   len(storedWorld.Monitors),
 	}
 	e.trace("world.reconciled", map[string]any{
 		"counts":          counts,
-		"activeWorkspace": world.ActiveWorkspaceID,
-		"activeClient":    world.ActiveClientAddress,
-		"delta":           worldDelta(prev, world),
+		"activeWorkspace": storedWorld.ActiveWorkspaceID,
+		"activeClient":    storedWorld.ActiveClientAddress,
+		"delta":           worldDelta(prev, storedWorld),
 	})
 
 	now := time.Now()
@@ -205,9 +231,10 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 
 	if e.dryRun {
 		for _, cmd := range plan.Commands {
+			command := loggableCommand(cmd, redact)
 			e.trace("dispatch.result", map[string]any{
 				"status":  "dry-run",
-				"command": cmd,
+				"command": command,
 			})
 		}
 		e.applyCooldown(rules, now.Add(1*time.Second))
@@ -215,9 +242,10 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	}
 	if err := plan.Execute(e.hyprctl); err != nil {
 		for _, cmd := range plan.Commands {
+			command := loggableCommand(cmd, redact)
 			e.trace("dispatch.result", map[string]any{
 				"status":  "error",
-				"command": cmd,
+				"command": command,
 				"error":   err.Error(),
 			})
 		}
@@ -225,11 +253,16 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	}
 	e.applyCooldown(rules, now.Add(1*time.Second))
 	for _, cmd := range plan.Commands {
+		command := loggableCommand(cmd, redact)
 		e.trace("dispatch.result", map[string]any{
 			"status":  "applied",
-			"command": cmd,
+			"command": command,
 		})
-		e.logger.Infof("dispatched: %v", cmd)
+		if redact {
+			e.logger.Infof("dispatched: %s", redactedTitle)
+		} else {
+			e.logger.Infof("dispatched: %v", cmd)
+		}
 	}
 	return nil
 }
@@ -241,8 +274,13 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 	if err != nil {
 		return nil, err
 	}
+	storedWorld := world
+	if e.redactTitlesEnabled() {
+		storedWorld = cloneWorld(world)
+		redactWorldTitles(storedWorld)
+	}
 	e.mu.Lock()
-	e.lastWorld = world
+	e.lastWorld = storedWorld
 	e.mu.Unlock()
 
 	_, rules := e.evaluate(world, time.Now(), false)
@@ -420,6 +458,43 @@ func (e *Engine) trace(event string, fields map[string]any) {
 		return
 	}
 	e.logger.Tracef("%s %s", event, formatTraceFields(fields))
+}
+
+const redactedTitle = "[redacted]"
+
+func cloneWorld(src *state.World) *state.World {
+	if src == nil {
+		return nil
+	}
+	copyWorld := *src
+	if len(src.Clients) > 0 {
+		copyWorld.Clients = append([]state.Client(nil), src.Clients...)
+	}
+	if len(src.Workspaces) > 0 {
+		copyWorld.Workspaces = append([]state.Workspace(nil), src.Workspaces...)
+	}
+	if len(src.Monitors) > 0 {
+		copyWorld.Monitors = append([]state.Monitor(nil), src.Monitors...)
+	}
+	return &copyWorld
+}
+
+func redactWorldTitles(world *state.World) {
+	if world == nil {
+		return
+	}
+	for i := range world.Clients {
+		if world.Clients[i].Title != "" {
+			world.Clients[i].Title = redactedTitle
+		}
+	}
+}
+
+func loggableCommand(cmd []string, redact bool) any {
+	if !redact {
+		return cmd
+	}
+	return redactedTitle
 }
 
 func formatTraceFields(fields map[string]any) string {

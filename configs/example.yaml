@@ -3,6 +3,7 @@ managedWorkspaces:
   # hyprpal will only touch workspaces listed here unless a rule opts out.
   - 3
   - 4
+redactTitles: false # set to true to hide client titles from logs and control APIs
 modes:
   - name: Coding
     rules:

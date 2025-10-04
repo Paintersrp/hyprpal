@@ -11,6 +11,7 @@ import (
 type Config struct {
 	ManagedWorkspaces []int        `yaml:"managedWorkspaces"`
 	Modes             []ModeConfig `yaml:"modes"`
+	RedactTitles      bool         `yaml:"redactTitles"`
 }
 
 // ModeConfig represents a named mode with a set of rules.
