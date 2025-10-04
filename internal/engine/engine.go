@@ -39,12 +39,14 @@ type Engine struct {
 	execHistory map[string][]time.Time
 	lastWorld   *state.World
 	evalLog     *evaluationLog
+	ruleChecks  *ruleCheckHistory
 }
 
 const (
-	ruleBurstWindow    = 5 * time.Second
-	ruleBurstThreshold = 3
-	ruleBurstCooldown  = 5 * time.Second
+	ruleBurstWindow       = 5 * time.Second
+	ruleBurstThreshold    = 3
+	ruleBurstCooldown     = 5 * time.Second
+	ruleCheckHistoryLimit = 256
 )
 
 type plannedRule struct {
@@ -59,6 +61,23 @@ type plannedRule struct {
 type PlannedCommand struct {
 	Dispatch []string
 	Reason   string
+}
+
+// RuleCheckRecord captures predicate evaluation outcomes for a single rule.
+type RuleCheckRecord struct {
+	Timestamp time.Time             `json:"timestamp"`
+	Mode      string                `json:"mode"`
+	Rule      string                `json:"rule"`
+	Matched   bool                  `json:"matched"`
+	Reason    string                `json:"reason,omitempty"`
+	Predicate *rules.PredicateTrace `json:"predicate,omitempty"`
+}
+
+type ruleCheckHistory struct {
+	buf      []RuleCheckRecord
+	start    int
+	count    int
+	capacity int
 }
 
 // New creates a new engine instance.
@@ -85,6 +104,7 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		cooldown:     make(map[string]time.Time),
 		execHistory:  make(map[string][]time.Time),
 		evalLog:      newEvaluationLog(0),
+		ruleChecks:   newRuleCheckHistory(0),
 	}
 }
 
@@ -124,6 +144,9 @@ func (e *Engine) ReloadModes(modes []rules.Mode) {
 	e.execHistory = make(map[string][]time.Time)
 	if e.evalLog != nil {
 		e.evalLog = newEvaluationLog(0)
+	}
+	if e.ruleChecks != nil {
+		e.ruleChecks = newRuleCheckHistory(0)
 	}
 	e.logger.Infof("reloaded %d modes", len(order))
 }
@@ -324,6 +347,16 @@ func (e *Engine) RuleEvaluationHistory() []RuleEvaluation {
 	return e.evalLog.snapshot()
 }
 
+// RuleCheckHistory returns the buffered rule evaluation checks.
+func (e *Engine) RuleCheckHistory() []RuleCheckRecord {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ruleChecks == nil {
+		return nil
+	}
+	return e.ruleChecks.snapshot()
+}
+
 func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.Plan, []plannedRule) {
 	e.mu.Lock()
 	activeMode := e.activeMode
@@ -345,19 +378,40 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 		last := e.debounce[key]
 		cooldownUntil := e.cooldown[key]
 		e.mu.Unlock()
+		matched := true
+		predicateTrace := &rules.PredicateTrace{Kind: "predicate", Result: true}
+		if rule.Tracer != nil {
+			matched, predicateTrace = rule.Tracer.Trace(evalCtx)
+		} else {
+			matched = rule.When(evalCtx)
+			predicateTrace = &rules.PredicateTrace{Kind: "predicate", Result: matched}
+		}
+		record := RuleCheckRecord{
+			Timestamp: now,
+			Mode:      activeMode,
+			Rule:      rule.Name,
+			Matched:   matched,
+			Predicate: predicateTrace,
+		}
 		if cooldownUntil.After(now) {
 			if log {
 				e.logger.Infof("rule %s skipped (cooldown) [mode %s]", rule.Name, activeMode)
 			}
+			record.Reason = "cooldown"
+			e.recordRuleCheck(record)
 			continue
 		}
 		if !last.IsZero() && now.Sub(last) < rule.Debounce {
 			if log {
 				e.logger.Infof("rule %s skipped (debounced) [mode %s]", rule.Name, activeMode)
 			}
+			record.Reason = "debounced"
+			e.recordRuleCheck(record)
 			continue
 		}
-		if !rule.When(evalCtx) {
+		if !matched {
+			record.Reason = "predicate"
+			e.recordRuleCheck(record)
 			continue
 		}
 		rulePlan := layout.Plan{}
@@ -376,6 +430,8 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 			rulePlan.Merge(p)
 		}
 		if len(rulePlan.Commands) == 0 {
+			record.Reason = "no-commands"
+			e.recordRuleCheck(record)
 			continue
 		}
 		throttled := e.trackExecution(key, rulePlan, now)
@@ -383,6 +439,8 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 			if log {
 				e.logger.Warnf("rule %s temporarily disabled after %d executions in %s [mode %s]", rule.Name, ruleBurstThreshold, ruleBurstWindow, activeMode)
 			}
+			record.Reason = "throttled"
+			e.recordRuleCheck(record)
 			continue
 		}
 		plan.Merge(rulePlan)
@@ -399,8 +457,70 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 			Name: rule.Name,
 			Plan: rulePlan,
 		})
+		record.Reason = "matched"
+		e.recordRuleCheck(record)
 	}
 	return plan, planned
+}
+
+func newRuleCheckHistory(limit int) *ruleCheckHistory {
+	if limit <= 0 {
+		limit = ruleCheckHistoryLimit
+	}
+	return &ruleCheckHistory{
+		buf:      make([]RuleCheckRecord, limit),
+		capacity: limit,
+	}
+}
+
+func (h *ruleCheckHistory) add(record RuleCheckRecord) {
+	if h == nil || h.capacity == 0 {
+		return
+	}
+	rec := cloneRuleCheckRecord(record)
+	if h.count < h.capacity {
+		idx := (h.start + h.count) % h.capacity
+		h.buf[idx] = rec
+		h.count++
+		return
+	}
+	h.buf[h.start] = rec
+	h.start = (h.start + 1) % h.capacity
+}
+
+func (h *ruleCheckHistory) snapshot() []RuleCheckRecord {
+	if h == nil || h.count == 0 {
+		return nil
+	}
+	out := make([]RuleCheckRecord, h.count)
+	for i := 0; i < h.count; i++ {
+		idx := (h.start + i) % h.capacity
+		out[i] = cloneRuleCheckRecord(h.buf[idx])
+	}
+	return out
+}
+
+func cloneRuleCheckRecord(record RuleCheckRecord) RuleCheckRecord {
+	cloned := RuleCheckRecord{
+		Timestamp: record.Timestamp,
+		Mode:      record.Mode,
+		Rule:      record.Rule,
+		Matched:   record.Matched,
+		Reason:    record.Reason,
+	}
+	if record.Predicate != nil {
+		cloned.Predicate = rules.ClonePredicateTrace(record.Predicate)
+	}
+	return cloned
+}
+
+func (e *Engine) recordRuleCheck(record RuleCheckRecord) {
+	if e.ruleChecks == nil {
+		return
+	}
+	e.mu.Lock()
+	e.ruleChecks.add(record)
+	e.mu.Unlock()
 }
 
 func (e *Engine) markDebounce(rules []plannedRule, when time.Time) {

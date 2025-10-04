@@ -11,6 +11,7 @@ import (
 type Rule struct {
 	Name              string
 	When              Predicate
+	Tracer            *PredicateTracer
 	Actions           []Action
 	Debounce          time.Duration
 	AllowUnmanaged    bool
@@ -33,7 +34,7 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 	for _, mode := range cfg.Modes {
 		compiled := Mode{Name: mode.Name}
 		for _, rc := range mode.Rules {
-			pred, err := BuildPredicate(rc.When)
+			pred, tracer, err := BuildPredicateWithTrace(rc.When)
 			if err != nil {
 				return nil, fmt.Errorf("rule %s: %w", rc.Name, err)
 			}
@@ -48,6 +49,7 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 			compiled.Rules = append(compiled.Rules, Rule{
 				Name:              rc.Name,
 				When:              pred,
+				Tracer:            tracer,
 				Actions:           acts,
 				Debounce:          debounce,
 				AllowUnmanaged:    rc.AllowUnmanaged,
