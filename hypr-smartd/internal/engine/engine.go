@@ -30,6 +30,7 @@ type Engine struct {
 
 	mu        sync.Mutex
 	debounce  map[string]time.Time
+	cooldown  map[string]time.Time
 	lastWorld *state.World
 }
 
@@ -53,6 +54,7 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		activeMode: active,
 		dryRun:     dryRun,
 		debounce:   make(map[string]time.Time),
+		cooldown:   make(map[string]time.Time),
 	}
 }
 
@@ -72,6 +74,7 @@ func (e *Engine) ReloadModes(modes []rules.Mode) {
 		e.activeMode = order[0]
 	}
 	e.debounce = make(map[string]time.Time)
+	e.cooldown = make(map[string]time.Time)
 	e.logger.Infof("reloaded %d modes", len(order))
 }
 
@@ -138,11 +141,17 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 
 	plan := layout.Plan{}
 	now := time.Now()
+	participating := make(map[string]struct{})
 	for _, rule := range mode.Rules {
 		key := activeMode + ":" + rule.Name
 		e.mu.Lock()
 		last := e.debounce[key]
+		cooldownUntil := e.cooldown[key]
 		e.mu.Unlock()
+		if cooldownUntil.After(now) {
+			e.logger.Infof("rule %s skipped (cooldown) [mode %s]", rule.Name, activeMode)
+			continue
+		}
 		if !last.IsZero() && now.Sub(last) < rule.Debounce {
 			e.logger.Infof("rule %s skipped (debounced) [mode %s]", rule.Name, activeMode)
 			continue
@@ -167,6 +176,7 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 			continue
 		}
 		plan.Merge(rulePlan)
+		participating[key] = struct{}{}
 		e.mu.Lock()
 		e.debounce[key] = now
 		e.mu.Unlock()
@@ -175,15 +185,29 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	if len(plan.Commands) == 0 {
 		return nil
 	}
+
+	applyCooldowns := func() {
+		if len(participating) == 0 {
+			return
+		}
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		until := now.Add(1 * time.Second)
+		for key := range participating {
+			e.cooldown[key] = until
+		}
+	}
 	if e.dryRun {
 		for _, cmd := range plan.Commands {
 			e.logger.Infof("DRY-RUN dispatch: %v", cmd)
 		}
+		applyCooldowns()
 		return nil
 	}
 	if err := plan.Execute(e.hyprctl); err != nil {
 		return err
 	}
+	applyCooldowns()
 	for _, cmd := range plan.Commands {
 		e.logger.Infof("dispatched: %v", cmd)
 	}

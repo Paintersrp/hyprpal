@@ -22,6 +22,14 @@ type fakeHyprctl struct {
 	dispatched      [][]string
 }
 
+type stubAction struct {
+	plan layout.Plan
+}
+
+func (s stubAction) Plan(rules.ActionContext) (layout.Plan, error) {
+	return s.plan, nil
+}
+
 func (f *fakeHyprctl) ListClients(context.Context) ([]state.Client, error) {
 	return append([]state.Client(nil), f.clients...), nil
 }
@@ -78,5 +86,42 @@ func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 	}
 	if len(hypr.dispatched) != 0 {
 		t.Fatalf("expected no dispatches, got %d", len(hypr.dispatched))
+	}
+}
+
+func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	var actPlan layout.Plan
+	actPlan.Add("focuswindow", "address:fake")
+	rule := rules.Rule{
+		Name:    "cool",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: actPlan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("first reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch, got %d", len(hypr.dispatched))
+	}
+
+	logs.Reset()
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("second reconcileAndApply returned error: %v", err)
+	}
+	expected := "rule cool skipped (cooldown) [mode Focus]"
+	if !strings.Contains(logs.String(), expected) {
+		t.Fatalf("expected log %q, got %q", expected, logs.String())
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected no additional dispatches, got %d", len(hypr.dispatched))
 	}
 }
