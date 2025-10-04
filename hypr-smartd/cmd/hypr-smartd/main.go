@@ -8,7 +8,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/hyprpal/hypr-smartd/internal/config"
 	"github.com/hyprpal/hypr-smartd/internal/engine"
 	"github.com/hyprpal/hypr-smartd/internal/ipc"
@@ -36,6 +38,25 @@ func main() {
 	if err != nil {
 		exitErr(fmt.Errorf("compile rules: %w", err))
 	}
+	cfgFullPath, err := filepath.Abs(*cfgPath)
+	if err != nil {
+		exitErr(fmt.Errorf("resolve config path: %w", err))
+	}
+	cfgFullPath = filepath.Clean(cfgFullPath)
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		exitErr(fmt.Errorf("watch config: %w", err))
+	}
+	defer watcher.Close()
+	cfgDir := filepath.Dir(cfgFullPath)
+	if err := watcher.Add(cfgDir); err != nil {
+		exitErr(fmt.Errorf("watch config dir: %w", err))
+	}
+	if err := watcher.Add(cfgFullPath); err != nil {
+		logger.Debugf("unable to watch config file directly: %v", err)
+	}
+	reloadRequests := make(chan string, 1)
+	go watchConfig(logger, watcher, cfgFullPath, reloadRequests)
 
 	hypr := ipc.NewClient()
 	eng := engine.New(hypr, logger, modes, *dryRun)
@@ -55,6 +76,23 @@ func main() {
 	go func() {
 		errs <- eng.Run(ctx)
 	}()
+	reload := func(reason string) {
+		logger.Infof("%s, reloading config", reason)
+		cfg, err := config.Load(*cfgPath)
+		if err != nil {
+			logger.Errorf("reload failed: %v", err)
+			return
+		}
+		modes, err := rules.BuildModes(cfg)
+		if err != nil {
+			logger.Errorf("compile failed: %v", err)
+			return
+		}
+		eng.ReloadModes(modes)
+		if err := eng.Reconcile(ctx); err != nil {
+			logger.Errorf("reconcile after reload failed: %v", err)
+		}
+	}
 
 	for {
 		select {
@@ -65,28 +103,59 @@ func main() {
 			}
 			logger.Infof("engine stopped")
 			return
+		case reason := <-reloadRequests:
+			reload(reason)
 		case sig := <-sigs:
 			switch sig {
 			case syscall.SIGHUP:
-				logger.Infof("received SIGHUP, reloading config")
-				cfg, err := config.Load(*cfgPath)
-				if err != nil {
-					logger.Errorf("reload failed: %v", err)
-					continue
-				}
-				modes, err := rules.BuildModes(cfg)
-				if err != nil {
-					logger.Errorf("compile failed: %v", err)
-					continue
-				}
-				eng.ReloadModes(modes)
-				if err := eng.Reconcile(ctx); err != nil {
-					logger.Errorf("reconcile after reload failed: %v", err)
-				}
+				reload("received SIGHUP")
 			case os.Interrupt, syscall.SIGTERM:
 				logger.Infof("received %s, shutting down", sig)
 				cancel()
 			}
+		}
+	}
+}
+
+func watchConfig(logger *util.Logger, watcher *fsnotify.Watcher, target string, reloadRequests chan<- string) {
+	const debounceWindow = 250 * time.Millisecond
+	var (
+		timer   *time.Timer
+		timerCh <-chan time.Time
+	)
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if filepath.Clean(event.Name) != target {
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+				continue
+			}
+			if timer == nil {
+				timer = time.NewTimer(debounceWindow)
+				timerCh = timer.C
+			} else {
+				if !timer.Stop() {
+					<-timerCh
+				}
+				timer.Reset(debounceWindow)
+			}
+		case <-timerCh:
+			timer = nil
+			timerCh = nil
+			select {
+			case reloadRequests <- "config file updated":
+			default:
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			logger.Warnf("config watcher error: %v", err)
 		}
 	}
 }
