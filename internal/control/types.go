@@ -4,6 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/hyprpal/hyprpal/internal/state"
 )
 
 const (
@@ -11,11 +14,12 @@ const (
 	SocketFileName = "control.sock"
 
 	// Action names supported by the control protocol.
-	ActionModeGet = "mode.get"
-	ActionModeSet = "mode.set"
-	ActionReload  = "reload"
-        ActionPlan    = "plan"
-        ActionInspect = "inspect"
+	ActionModeGet      = "mode.get"
+	ActionModeSet      = "mode.set"
+	ActionReload       = "reload"
+	ActionPlan         = "plan"
+	ActionInspect      = "inspect" // legacy alias for inspector.get
+	ActionInspectorGet = "inspector.get"
 
 	// Response statuses.
 	StatusOK    = "ok"
@@ -50,6 +54,23 @@ type PlanCommand struct {
 // PlanResult captures the commands returned by the daemon when planning.
 type PlanResult struct {
 	Commands []PlanCommand `json:"commands"`
+}
+
+// RuleEvaluation captures a single rule evaluation outcome for the inspector view.
+type RuleEvaluation struct {
+	Timestamp time.Time  `json:"timestamp"`
+	Mode      string     `json:"mode"`
+	Rule      string     `json:"rule"`
+	Status    string     `json:"status"`
+	Commands  [][]string `json:"commands,omitempty"`
+	Error     string     `json:"error,omitempty"`
+}
+
+// InspectorSnapshot captures the daemon's last reconciled world snapshot, mode state, and rule log.
+type InspectorSnapshot struct {
+	Mode    ModeStatus       `json:"mode"`
+	World   *state.World     `json:"world"`
+	History []RuleEvaluation `json:"history,omitempty"`
 }
 
 // DefaultSocketPath returns the expected location of the hyprpal control socket.

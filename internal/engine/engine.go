@@ -38,6 +38,7 @@ type Engine struct {
 	cooldown    map[string]time.Time
 	execHistory map[string][]time.Time
 	lastWorld   *state.World
+	evalLog     *evaluationLog
 }
 
 const (
@@ -83,6 +84,7 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		debounce:     make(map[string]time.Time),
 		cooldown:     make(map[string]time.Time),
 		execHistory:  make(map[string][]time.Time),
+		evalLog:      newEvaluationLog(0),
 	}
 }
 
@@ -120,6 +122,9 @@ func (e *Engine) ReloadModes(modes []rules.Mode) {
 	e.debounce = make(map[string]time.Time)
 	e.cooldown = make(map[string]time.Time)
 	e.execHistory = make(map[string][]time.Time)
+	if e.evalLog != nil {
+		e.evalLog = newEvaluationLog(0)
+	}
 	e.logger.Infof("reloaded %d modes", len(order))
 }
 
@@ -238,6 +243,7 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 			})
 		}
 		e.applyCooldown(rules, now.Add(1*time.Second))
+		e.recordRuleEvaluations(rules, now, RuleEvaluationStatusDryRun, nil)
 		return nil
 	}
 	if err := plan.Execute(e.hyprctl); err != nil {
@@ -249,6 +255,7 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 				"error":   err.Error(),
 			})
 		}
+		e.recordRuleEvaluations(rules, now, RuleEvaluationStatusError, err)
 		return err
 	}
 	e.applyCooldown(rules, now.Add(1*time.Second))
@@ -264,6 +271,7 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 			e.logger.Infof("dispatched: %v", cmd)
 		}
 	}
+	e.recordRuleEvaluations(rules, now, RuleEvaluationStatusApplied, nil)
 	return nil
 }
 
@@ -306,6 +314,14 @@ func (e *Engine) LastWorld() *state.World {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.lastWorld
+}
+
+// RuleEvaluationHistory returns the recent rule evaluation records.
+func (e *Engine) RuleEvaluationHistory() []RuleEvaluation {
+	if e.evalLog == nil {
+		return nil
+	}
+	return e.evalLog.snapshot()
 }
 
 func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.Plan, []plannedRule) {
@@ -406,6 +422,30 @@ func (e *Engine) applyCooldown(rules []plannedRule, until time.Time) {
 	defer e.mu.Unlock()
 	for _, pr := range rules {
 		e.cooldown[pr.Key] = until
+	}
+}
+
+func (e *Engine) recordRuleEvaluations(rules []plannedRule, when time.Time, status RuleEvaluationStatus, err error) {
+	if len(rules) == 0 {
+		return
+	}
+	if e.evalLog == nil {
+		return
+	}
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	for _, pr := range rules {
+		entry := RuleEvaluation{
+			Timestamp: when,
+			Mode:      pr.Mode,
+			Rule:      pr.Name,
+			Status:    status,
+			Commands:  cloneCommands(pr.Plan.Commands),
+			Error:     message,
+		}
+		e.evalLog.record(entry)
 	}
 }
 

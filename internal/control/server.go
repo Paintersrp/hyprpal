@@ -145,8 +145,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		s.handleReload(conn)
 	case ActionPlan:
 		s.handlePlan(ctx, conn, req.Params)
-	case ActionInspect:
-		s.handleInspect(conn)
+	case ActionInspectorGet, ActionInspect:
+		s.handleInspectorGet(conn)
 	default:
 		s.writeError(conn, fmt.Errorf("unknown action %q", req.Action))
 	}
@@ -202,18 +202,40 @@ func (s *Server) handlePlan(ctx context.Context, conn net.Conn, params map[strin
 	s.writeOK(conn, result)
 }
 
-func (s *Server) handleInspect(conn net.Conn) {
-	payload := struct {
-		Mode  ModeStatus   `json:"mode"`
-		World *state.World `json:"world"`
-	}{
+func (s *Server) handleInspectorGet(conn net.Conn) {
+	snapshot := InspectorSnapshot{
 		Mode: ModeStatus{
 			Active:    s.engine.ActiveMode(),
 			Available: s.engine.AvailableModes(),
 		},
 		World: state.CloneWorld(s.engine.LastWorld()),
 	}
-	s.writeOK(conn, payload)
+	history := s.engine.RuleEvaluationHistory()
+	if len(history) > 0 {
+		snapshot.History = make([]RuleEvaluation, 0, len(history))
+		for _, entry := range history {
+			snapshot.History = append(snapshot.History, RuleEvaluation{
+				Timestamp: entry.Timestamp,
+				Mode:      entry.Mode,
+				Rule:      entry.Rule,
+				Status:    string(entry.Status),
+				Commands:  cloneInspectorCommands(entry.Commands),
+				Error:     entry.Error,
+			})
+		}
+	}
+	s.writeOK(conn, snapshot)
+}
+
+func cloneInspectorCommands(cmds [][]string) [][]string {
+	if len(cmds) == 0 {
+		return nil
+	}
+	out := make([][]string, len(cmds))
+	for i, cmd := range cmds {
+		out[i] = append([]string(nil), cmd...)
+	}
+	return out
 }
 
 func (s *Server) writeOK(conn net.Conn, data any) {
