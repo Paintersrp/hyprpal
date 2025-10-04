@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/hyprpal/hyprpal/internal/config"
+	"github.com/hyprpal/hyprpal/internal/control"
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/ipc"
 	"github.com/hyprpal/hyprpal/internal/rules"
@@ -58,6 +60,9 @@ func main() {
 	reloadRequests := make(chan string, 1)
 	go watchConfig(logger, watcher, cfgFullPath, reloadRequests)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	hypr := ipc.NewClient()
 	eng := engine.New(hypr, logger, modes, *dryRun)
 	if *startMode != "" {
@@ -66,33 +71,41 @@ func main() {
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
-	errs := make(chan error, 1)
-	go func() {
-		errs <- eng.Run(ctx)
-	}()
-	reload := func(reason string) {
+	reload := func(reason string) error {
 		logger.Infof("%s, reloading config", reason)
 		cfg, err := config.Load(*cfgPath)
 		if err != nil {
-			logger.Errorf("reload failed: %v", err)
-			return
+			return fmt.Errorf("load config: %w", err)
 		}
 		modes, err := rules.BuildModes(cfg)
 		if err != nil {
-			logger.Errorf("compile failed: %v", err)
-			return
+			return fmt.Errorf("compile rules: %w", err)
 		}
 		eng.ReloadModes(modes)
 		if err := eng.Reconcile(ctx); err != nil {
-			logger.Errorf("reconcile after reload failed: %v", err)
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return fmt.Errorf("reconcile after reload: %w", err)
 		}
+		return nil
 	}
+
+	ctrlSrv, err := control.NewServer(eng, logger, reload)
+	if err != nil {
+		exitErr(fmt.Errorf("start control server: %w", err))
+	}
+
+	errs := make(chan error, 2)
+	go func() {
+		errs <- eng.Run(ctx)
+	}()
+	go func() {
+		errs <- ctrlSrv.Serve(ctx)
+	}()
 
 	for {
 		select {
@@ -104,11 +117,15 @@ func main() {
 			logger.Infof("engine stopped")
 			return
 		case reason := <-reloadRequests:
-			reload(reason)
+			if err := reload(reason); err != nil {
+				logger.Errorf("reload failed: %v", err)
+			}
 		case sig := <-sigs:
 			switch sig {
 			case syscall.SIGHUP:
-				reload("received SIGHUP")
+				if err := reload("received SIGHUP"); err != nil {
+					logger.Errorf("reload failed: %v", err)
+				}
 			case os.Interrupt, syscall.SIGTERM:
 				logger.Infof("received %s, shutting down", sig)
 				cancel()
