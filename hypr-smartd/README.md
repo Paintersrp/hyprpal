@@ -35,7 +35,7 @@ modes:
             params:
               workspace: 3
               side: right
-              widthPercent: 25
+              widthPercent: 25 # must be between 10 and 50
               match:
                 anyClass: [Slack, discord]
   - name: Gaming
@@ -49,7 +49,7 @@ modes:
               target: active
 ```
 
-Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the provided systemd unit. Send `SIGHUP` (e.g. `systemctl --user reload hypr-smartd`) to reload without restarting.
+Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. Send `SIGHUP` (e.g. `systemctl --user reload hypr-smartd`) to reload without restarting.
 
 ## Makefile targets
 

@@ -12,11 +12,19 @@ type Rect struct {
 
 // SplitSidecar returns the primary and sidecar rectangles given a monitor rect and desired width percentage.
 func SplitSidecar(monitor Rect, side string, widthPercent float64) (main Rect, dock Rect) {
+	const (
+		defaultWidth = 25
+		minWidth     = 10
+		maxWidth     = 50
+	)
 	if widthPercent <= 0 {
-		widthPercent = 25
+		widthPercent = defaultWidth
 	}
-	if widthPercent > 50 {
-		widthPercent = 50
+	if widthPercent < minWidth {
+		widthPercent = minWidth
+	}
+	if widthPercent > maxWidth {
+		widthPercent = maxWidth
 	}
 	dockWidth := monitor.Width * widthPercent / 100
 	main = monitor

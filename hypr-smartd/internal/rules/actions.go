@@ -80,6 +80,9 @@ func buildSidecarDock(params map[string]interface{}) (Action, error) {
 	if err != nil {
 		return nil, err
 	}
+	if width < 10 {
+		return nil, fmt.Errorf("widthPercent must be at least 10, got %v", width)
+	}
 	matcher, err := parseClientMatcher(params["match"])
 	if err != nil {
 		return nil, err
