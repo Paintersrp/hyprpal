@@ -12,7 +12,7 @@ modes:
             params:
               workspace: 3
               side: right
-              widthPercent: 25
+              widthPercent: 25 # allowed range: 10-50
               match:
                 anyClass: [Slack, discord]
   - name: Gaming
