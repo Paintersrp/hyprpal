@@ -1,3 +1,4 @@
+# Launch hyprpal with `--dispatch=socket|hyprctl` to match your environment.
 modes:
   - name: Coding
     rules:

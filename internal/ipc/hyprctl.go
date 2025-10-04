@@ -238,20 +238,27 @@ func (c *EngineClient) DispatchBatch(commands [][]string) error {
 	return layout.ErrBatchUnsupported
 }
 
-// NewEngineClient returns a client suitable for the engine, preferring the socket dispatcher.
-func NewEngineClient(logger *util.Logger) (*EngineClient, DispatchStrategy) {
+// NewEngineClient returns a client suitable for the engine using the requested strategy when possible.
+func NewEngineClient(logger *util.Logger, requested DispatchStrategy) (*EngineClient, DispatchStrategy, error) {
 	base := NewClient()
-	disp, err := newSocketDispatcher()
-	if err != nil {
-		if logger != nil {
-			logger.Debugf("using hyprctl dispatch: %v", err)
+	switch requested {
+	case DispatchStrategySocket:
+		disp, err := newSocketDispatcher()
+		if err != nil {
+			if logger != nil {
+				logger.Warnf("falling back to hyprctl dispatch: %v", err)
+			}
+			return &EngineClient{Client: base}, DispatchStrategyHyprctl, nil
 		}
-		return &EngineClient{Client: base}, DispatchStrategyHyprctl
+		if logger != nil {
+			logger.Debugf("using socket dispatch at %s", disp.DispatchSocketPath())
+		}
+		return &EngineClient{Client: base, dispatcher: disp}, DispatchStrategySocket, nil
+	case DispatchStrategyHyprctl:
+		return &EngineClient{Client: base}, DispatchStrategyHyprctl, nil
+	default:
+		return nil, "", fmt.Errorf("unknown dispatch strategy %q", requested)
 	}
-	if logger != nil {
-		logger.Debugf("using socket dispatch at %s", disp.DispatchSocketPath())
-	}
-	return &EngineClient{Client: base, dispatcher: disp}, DispatchStrategySocket
 }
 
 var _ layout.Dispatcher = (*EngineClient)(nil)

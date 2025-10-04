@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,7 +29,15 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "do not dispatch commands")
 	logLevel := flag.String("log-level", "info", "log level (debug|info|warn|error)")
 	startMode := flag.String("mode", "", "initial mode to activate")
+	dispatchStrategy := flag.String("dispatch", string(ipc.DispatchStrategySocket), "dispatch strategy (socket|hyprctl)")
 	flag.Parse()
+
+	selectedStrategy := ipc.DispatchStrategy(strings.ToLower(*dispatchStrategy))
+	switch selectedStrategy {
+	case ipc.DispatchStrategySocket, ipc.DispatchStrategyHyprctl:
+	default:
+		exitErr(fmt.Errorf("unsupported dispatch strategy %q", *dispatchStrategy))
+	}
 
 	logger := util.NewLogger(util.ParseLogLevel(*logLevel))
 
@@ -63,7 +72,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	hypr, strategy := ipc.NewEngineClient(logger)
+	hypr, strategy, err := ipc.NewEngineClient(logger, selectedStrategy)
+	if err != nil {
+		exitErr(fmt.Errorf("configure dispatch strategy: %w", err))
+	}
 	logger.Infof("using %s dispatch strategy", strategy)
 	eng := engine.New(hypr, logger, modes, *dryRun)
 	if *startMode != "" {
