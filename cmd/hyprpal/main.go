@@ -63,7 +63,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	hypr := ipc.NewClient()
+	hypr, strategy := ipc.NewEngineClient(logger)
+	logger.Infof("using %s dispatch strategy", strategy)
 	eng := engine.New(hypr, logger, modes, *dryRun)
 	if *startMode != "" {
 		if err := eng.SetMode(*startMode); err != nil {
