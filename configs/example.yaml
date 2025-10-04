@@ -4,6 +4,10 @@ managedWorkspaces:
   - 3
   - 4
 redactTitles: false # set to true to hide client titles from logs and control APIs
+gaps:
+  inner: 8  # pixels between floating windows
+  outer: 20 # pixels around monitor edges
+placementTolerancePx: 2.0 # slack for idempotence checks; set 0 for exact matches
 modes:
   - name: Coding
     rules:

@@ -13,8 +13,14 @@ type Rect struct {
 	Height float64
 }
 
+// Gaps represents outer and inner gaps applied during layout calculations.
+type Gaps struct {
+	Inner float64
+	Outer float64
+}
+
 // SplitSidecar returns the primary and sidecar rectangles given a monitor rect and desired width percentage.
-func SplitSidecar(monitor Rect, side string, widthPercent float64) (main Rect, dock Rect) {
+func SplitSidecar(monitor Rect, side string, widthPercent float64, gaps Gaps) (main Rect, dock Rect) {
 	const (
 		defaultWidth = 25
 		minWidth     = 10
@@ -30,24 +36,46 @@ func SplitSidecar(monitor Rect, side string, widthPercent float64) (main Rect, d
 	if widthPercent > maxWidth {
 		widthPercent = maxWidth
 	}
-	dockWidth := monitor.Width * widthPercent / 100
-	main = monitor
-	dock = monitor
+	usable := monitor
+	usable.X += gaps.Outer
+	usable.Y += gaps.Outer
+	usable.Width -= gaps.Outer * 2
+	usable.Height -= gaps.Outer * 2
+	if usable.Width < 0 {
+		usable.Width = 0
+	}
+	if usable.Height < 0 {
+		usable.Height = 0
+	}
+
+	horizontalSpan := usable.Width - gaps.Inner
+	if horizontalSpan < 0 {
+		horizontalSpan = 0
+	}
+
+	dockWidth := horizontalSpan * widthPercent / 100
+	main = usable
+	dock = usable
+	main.Width = horizontalSpan - dockWidth
+	if main.Width < 0 {
+		main.Width = 0
+	}
 	if side == "right" {
-		dock.X = monitor.X + monitor.Width - dockWidth
-		main.Width = monitor.Width - dockWidth
+		dock.X = usable.X + main.Width + gaps.Inner
 	} else {
 		dock.Width = dockWidth
-		main.X = monitor.X + dockWidth
-		main.Width = monitor.Width - dockWidth
+		main.X = usable.X + dockWidth + gaps.Inner
 	}
 	dock.Width = dockWidth
+	dock.Y = usable.Y
+	dock.Height = usable.Height
+	main.Y = usable.Y
+	main.Height = usable.Height
 	return main, dock
 }
 
 // ApproximatelyEqual reports whether two rects are almost equal.
-func ApproximatelyEqual(a, b Rect) bool {
-	const eps = 2.0
-	return math.Abs(a.X-b.X) < eps && math.Abs(a.Y-b.Y) < eps &&
-		math.Abs(a.Width-b.Width) < eps && math.Abs(a.Height-b.Height) < eps
+func ApproximatelyEqual(a, b Rect, tolerance float64) bool {
+	return math.Abs(a.X-b.X) <= tolerance && math.Abs(a.Y-b.Y) <= tolerance &&
+		math.Abs(a.Width-b.Width) <= tolerance && math.Abs(a.Height-b.Height) <= tolerance
 }
