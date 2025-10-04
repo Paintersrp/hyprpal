@@ -20,6 +20,50 @@
    journalctl --user -fu hyprpal
    ```
 
+## `hsctl` control CLI
+
+`hsctl` is the companion CLI for interacting with a running `hyprpal` daemon. It talks to the daemon over the Unix control socket (default: `${XDG_RUNTIME_DIR}/hyprpal/control.sock`, override with `HYPRPAL_CONTROL_SOCKET` or `--socket`). `make build` compiles `hsctl` to `bin/hsctl`, while `make install` places it alongside `hyprpal` in `~/.local/bin` by default.
+
+### Inspect and change modes
+
+Retrieve the active mode and the available options:
+
+```bash
+hsctl mode get
+# Active mode: Coding
+# Available modes: Coding, Gaming
+```
+
+Switch modes instantly; the daemon updates its world model and reapplies rules for the new mode:
+
+```bash
+hsctl mode set Gaming
+# Switched to mode Gaming
+```
+
+### Reload configuration
+
+Trigger a configuration reload (equivalent to sending `SIGHUP`). The daemon re-reads the YAML config and reconciles rules without restarting:
+
+```bash
+hsctl reload
+# Reload requested
+```
+
+### Preview plans with explanations
+
+Ask the daemon to compute the pending Hyprland dispatches. The optional `--explain` flag includes the rule reason associated with each command:
+
+```bash
+hsctl plan --explain
+# dispatch: dispatch focusworkspace 3
+#   reason: Coding › Dock comms on workspace 3
+# dispatch: dispatch movewindowpixel exact 0 0
+#   reason: Sidecar dock Slack on workspace 3
+```
+
+When no actions are queued, `hsctl` prints `No pending actions`.
+
 ## Configuration
 
 Configuration is YAML with modes, rules, and actions. A condensed example:
@@ -94,5 +138,5 @@ journalctl --user -fu hyprpal
 - Grid layout primitive and Coding mode demo.
 - Hot reload config watcher plus richer error reporting.
 - Replace `hyprctl` shell-outs with direct socket IPC for lower latency.
-- Add `hsctl` CLI helper for mode inspection and manual actions.
+- Extend `hsctl` with scripted workflows (macros, templated plans).
 - Guardrails for loop protection and managed-workspace scoping.
