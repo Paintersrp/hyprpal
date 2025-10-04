@@ -53,7 +53,7 @@ modes:
               target: active
 ```
 
-Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. Send `SIGHUP` (e.g. `systemctl --user reload hypr-smartd`) to reload without restarting.
+Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hypr-smartd`) for manual reloads.
 
 ## Makefile targets
 
