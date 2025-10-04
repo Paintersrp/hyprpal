@@ -12,13 +12,15 @@ import (
 type LogLevel int32
 
 const (
-	LevelDebug LogLevel = iota
+	LevelTrace LogLevel = iota
+	LevelDebug
 	LevelInfo
 	LevelWarn
 	LevelError
 )
 
 var levelNames = map[string]LogLevel{
+	"trace": LevelTrace,
 	"debug": LevelDebug,
 	"info":  LevelInfo,
 	"warn":  LevelWarn,
@@ -58,6 +60,9 @@ func (l *Logger) logf(level LogLevel, prefix string, format string, args ...inte
 	l.base.Printf("[%s] %s", strings.ToUpper(prefix), fmt.Sprintf(format, args...))
 }
 
+func (l *Logger) Tracef(format string, args ...interface{}) {
+	l.logf(LevelTrace, "trace", format, args...)
+}
 func (l *Logger) Debugf(format string, args ...interface{}) {
 	l.logf(LevelDebug, "debug", format, args...)
 }
