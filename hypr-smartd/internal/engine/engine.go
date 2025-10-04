@@ -34,6 +34,20 @@ type Engine struct {
 	lastWorld *state.World
 }
 
+type plannedRule struct {
+	Key  string
+	Mode string
+	Name string
+	Plan layout.Plan
+}
+
+// PlannedCommand represents a hyprctl dispatch that would be executed for the
+// current world snapshot.
+type PlannedCommand struct {
+	Dispatch []string
+	Reason   string
+}
+
 // New creates a new engine instance.
 func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool) *Engine {
 	modeMap := make(map[string]rules.Mode)
@@ -56,6 +70,22 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		debounce:   make(map[string]time.Time),
 		cooldown:   make(map[string]time.Time),
 	}
+}
+
+// ActiveMode returns the currently selected mode name.
+func (e *Engine) ActiveMode() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.activeMode
+}
+
+// AvailableModes returns the ordered list of available modes.
+func (e *Engine) AvailableModes() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	modes := make([]string, len(e.modeOrder))
+	copy(modes, e.modeOrder)
+	return modes
 }
 
 // ReloadModes replaces the mode set while keeping the current selection when possible.
@@ -130,18 +160,84 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	}
 	e.mu.Lock()
 	e.lastWorld = world
-	activeMode := e.activeMode
-	mode, ok := e.modes[activeMode]
 	e.mu.Unlock()
 
-	if !ok {
-		e.logger.Warnf("no active mode selected; skipping apply")
+	now := time.Now()
+	plan, rules := e.evaluate(world, now, true)
+	if len(plan.Commands) == 0 {
 		return nil
 	}
 
-	plan := layout.Plan{}
-	now := time.Now()
-	participating := make(map[string]struct{})
+	e.markDebounce(rules, now)
+
+	if e.dryRun {
+		for _, cmd := range plan.Commands {
+			e.logger.Infof("DRY-RUN dispatch: %v", cmd)
+		}
+		e.applyCooldown(rules, now.Add(1*time.Second))
+		return nil
+	}
+	if err := plan.Execute(e.hyprctl); err != nil {
+		return err
+	}
+	e.applyCooldown(rules, now.Add(1*time.Second))
+	for _, cmd := range plan.Commands {
+		e.logger.Infof("dispatched: %v", cmd)
+	}
+	return nil
+}
+
+// PreviewPlan evaluates the current world and returns the pending plan without
+// dispatching commands.
+func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedCommand, error) {
+	world, err := state.NewWorld(ctx, e.hyprctl)
+	if err != nil {
+		return nil, err
+	}
+	e.mu.Lock()
+	e.lastWorld = world
+	e.mu.Unlock()
+
+	_, rules := e.evaluate(world, time.Now(), false)
+	commands := make([]PlannedCommand, 0)
+	for _, pr := range rules {
+		reason := ""
+		if explain {
+			reason = fmt.Sprintf("%s:%s", pr.Mode, pr.Name)
+		}
+		for _, cmd := range pr.Plan.Commands {
+			dispatch := append([]string(nil), cmd...)
+			commands = append(commands, PlannedCommand{
+				Dispatch: dispatch,
+				Reason:   reason,
+			})
+		}
+	}
+	return commands, nil
+}
+
+// LastWorld returns the most recent world snapshot.
+func (e *Engine) LastWorld() *state.World {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lastWorld
+}
+
+func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.Plan, []plannedRule) {
+	e.mu.Lock()
+	activeMode := e.activeMode
+	mode, ok := e.modes[activeMode]
+	e.mu.Unlock()
+	if !ok {
+		if log {
+			e.logger.Warnf("no active mode selected; skipping apply")
+		}
+		return layout.Plan{}, nil
+	}
+
+	var plan layout.Plan
+	planned := make([]plannedRule, 0, len(mode.Rules))
+	evalCtx := rules.EvalContext{Mode: activeMode, World: world}
 	for _, rule := range mode.Rules {
 		key := activeMode + ":" + rule.Name
 		e.mu.Lock()
@@ -149,14 +245,18 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 		cooldownUntil := e.cooldown[key]
 		e.mu.Unlock()
 		if cooldownUntil.After(now) {
-			e.logger.Infof("rule %s skipped (cooldown) [mode %s]", rule.Name, activeMode)
+			if log {
+				e.logger.Infof("rule %s skipped (cooldown) [mode %s]", rule.Name, activeMode)
+			}
 			continue
 		}
 		if !last.IsZero() && now.Sub(last) < rule.Debounce {
-			e.logger.Infof("rule %s skipped (debounced) [mode %s]", rule.Name, activeMode)
+			if log {
+				e.logger.Infof("rule %s skipped (debounced) [mode %s]", rule.Name, activeMode)
+			}
 			continue
 		}
-		if !rule.When(rules.EvalContext{Mode: e.activeMode, World: world}) {
+		if !rule.When(evalCtx) {
 			continue
 		}
 		rulePlan := layout.Plan{}
@@ -176,49 +276,36 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 			continue
 		}
 		plan.Merge(rulePlan)
-		participating[key] = struct{}{}
-		e.mu.Lock()
-		e.debounce[key] = now
-		e.mu.Unlock()
+		planned = append(planned, plannedRule{
+			Key:  key,
+			Mode: activeMode,
+			Name: rule.Name,
+			Plan: rulePlan,
+		})
 	}
-
-	if len(plan.Commands) == 0 {
-		return nil
-	}
-
-	applyCooldowns := func() {
-		if len(participating) == 0 {
-			return
-		}
-		e.mu.Lock()
-		defer e.mu.Unlock()
-		until := now.Add(1 * time.Second)
-		for key := range participating {
-			e.cooldown[key] = until
-		}
-	}
-	if e.dryRun {
-		for _, cmd := range plan.Commands {
-			e.logger.Infof("DRY-RUN dispatch: %v", cmd)
-		}
-		applyCooldowns()
-		return nil
-	}
-	if err := plan.Execute(e.hyprctl); err != nil {
-		return err
-	}
-	applyCooldowns()
-	for _, cmd := range plan.Commands {
-		e.logger.Infof("dispatched: %v", cmd)
-	}
-	return nil
+	return plan, planned
 }
 
-// LastWorld returns the most recent world snapshot.
-func (e *Engine) LastWorld() *state.World {
+func (e *Engine) markDebounce(rules []plannedRule, when time.Time) {
+	if len(rules) == 0 {
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.lastWorld
+	for _, pr := range rules {
+		e.debounce[pr.Key] = when
+	}
+}
+
+func (e *Engine) applyCooldown(rules []plannedRule, until time.Time) {
+	if len(rules) == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, pr := range rules {
+		e.cooldown[pr.Key] = until
+	}
 }
 
 func (e *Engine) isInteresting(kind string) bool {
