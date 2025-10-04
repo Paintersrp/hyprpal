@@ -197,7 +197,7 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	redact := e.redactTitlesEnabled()
 	storedWorld := world
 	if redact {
-		storedWorld = cloneWorld(world)
+		storedWorld = state.CloneWorld(world)
 		redactWorldTitles(storedWorld)
 	}
 	e.mu.Lock()
@@ -276,7 +276,7 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 	}
 	storedWorld := world
 	if e.redactTitlesEnabled() {
-		storedWorld = cloneWorld(world)
+		storedWorld = state.CloneWorld(world)
 		redactWorldTitles(storedWorld)
 	}
 	e.mu.Lock()
@@ -461,23 +461,6 @@ func (e *Engine) trace(event string, fields map[string]any) {
 }
 
 const redactedTitle = "[redacted]"
-
-func cloneWorld(src *state.World) *state.World {
-	if src == nil {
-		return nil
-	}
-	copyWorld := *src
-	if len(src.Clients) > 0 {
-		copyWorld.Clients = append([]state.Client(nil), src.Clients...)
-	}
-	if len(src.Workspaces) > 0 {
-		copyWorld.Workspaces = append([]state.Workspace(nil), src.Workspaces...)
-	}
-	if len(src.Monitors) > 0 {
-		copyWorld.Monitors = append([]state.Monitor(nil), src.Monitors...)
-	}
-	return &copyWorld
-}
 
 func redactWorldTitles(world *state.World) {
 	if world == nil {

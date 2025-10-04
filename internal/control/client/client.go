@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/control"
+	"github.com/hyprpal/hyprpal/internal/state"
 )
 
 const (
@@ -29,6 +30,12 @@ type (
 	// PlanResult captures the commands returned by the daemon when planning.
 	PlanResult = control.PlanResult
 )
+
+// InspectorState captures the daemon's last reconciled world snapshot alongside mode info.
+type InspectorState struct {
+	Mode  ModeStatus   `json:"mode"`
+	World *state.World `json:"world"`
+}
 
 // New creates a client that connects to the provided socket path. When path is
 // empty, the default runtime path is used.
@@ -74,6 +81,15 @@ func (c *Client) Plan(ctx context.Context, explain bool) (PlanResult, error) {
 		return PlanResult{}, err
 	}
 	return result, nil
+}
+
+// Inspect retrieves the daemon's most recent world snapshot along with mode information.
+func (c *Client) Inspect(ctx context.Context) (InspectorState, error) {
+	var snapshot InspectorState
+	if err := c.do(ctx, control.Request{Action: control.ActionInspect}, &snapshot); err != nil {
+		return InspectorState{}, err
+	}
+	return snapshot, nil
 }
 
 func (c *Client) do(ctx context.Context, req control.Request, out any) error {

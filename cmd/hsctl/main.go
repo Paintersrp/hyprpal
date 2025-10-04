@@ -6,10 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/control/client"
+	"github.com/hyprpal/hyprpal/internal/ui/tui"
 )
 
 func main() {
@@ -56,6 +59,8 @@ func run(argv []string) error {
 		return runReload(ctx, cli)
 	case "plan":
 		return runPlan(ctx, cli, args[1:])
+	case "tui":
+		return runTUI(cli)
 	default:
 		fs.Usage()
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -123,6 +128,16 @@ func runPlan(ctx context.Context, cli *client.Client, args []string) error {
 		if cmd.Reason != "" {
 			fmt.Printf("  reason: %s\n", cmd.Reason)
 		}
+	}
+	return nil
+}
+
+func runTUI(cli *client.Client) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	renderer := tui.New(cli, os.Stdout)
+	if err := renderer.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
 	}
 	return nil
 }
