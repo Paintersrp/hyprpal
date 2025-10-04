@@ -101,7 +101,7 @@ func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 			Debounce: time.Second,
 		}},
 	}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
 	key := mode.Name + ":" + mode.Rules[0].Name
 	eng.debounce[key] = time.Now()
 
@@ -133,7 +133,7 @@ func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: actPlan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("first reconcileAndApply returned error: %v", err)
@@ -172,7 +172,7 @@ func TestReconcileUsesBatchDispatcherWhenAvailable(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)
@@ -203,7 +203,7 @@ func TestRuleExecutionTrackingAllowsNormalFlow(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)
@@ -231,7 +231,7 @@ func TestRuleExecutionTrackingBelowThreshold(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
 	key := mode.Name + ":" + rule.Name
 
 	for i := 0; i < ruleBurstThreshold; i++ {
@@ -264,7 +264,7 @@ func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
 	key := mode.Name + ":" + rule.Name
 
 	for i := 0; i < ruleBurstThreshold; i++ {
@@ -321,7 +321,7 @@ func TestTraceLoggingDryRunSequence(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelTrace, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, true, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, true, false, layout.Gaps{}, 2)
 	eng.mu.Lock()
 	eng.lastWorld = baseWorld
 	eng.mu.Unlock()
@@ -421,7 +421,7 @@ func TestRedactTitlesToggle(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)

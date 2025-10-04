@@ -9,9 +9,17 @@ import (
 
 // Config is the top-level configuration document.
 type Config struct {
-	ManagedWorkspaces []int        `yaml:"managedWorkspaces"`
-	Modes             []ModeConfig `yaml:"modes"`
-	RedactTitles      bool         `yaml:"redactTitles"`
+	ManagedWorkspaces    []int        `yaml:"managedWorkspaces"`
+	Modes                []ModeConfig `yaml:"modes"`
+	RedactTitles         bool         `yaml:"redactTitles"`
+	Gaps                 Gaps         `yaml:"gaps"`
+	PlacementTolerancePx float64      `yaml:"placementTolerancePx"`
+}
+
+// Gaps describes inner and outer gaps applied during layout planning.
+type Gaps struct {
+	Inner float64 `yaml:"inner"`
+	Outer float64 `yaml:"outer"`
 }
 
 // ModeConfig represents a named mode with a set of rules.
@@ -58,16 +66,32 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
+	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
+func (c *Config) applyDefaults() {
+	if c.PlacementTolerancePx == 0 {
+		c.PlacementTolerancePx = 2.0
+	}
+}
+
 // Validate performs basic sanity checks.
 func (c *Config) Validate() error {
 	if len(c.Modes) == 0 {
 		return fmt.Errorf("config must define at least one mode")
+	}
+	if c.Gaps.Inner < 0 {
+		return fmt.Errorf("gaps.inner cannot be negative")
+	}
+	if c.Gaps.Outer < 0 {
+		return fmt.Errorf("gaps.outer cannot be negative")
+	}
+	if c.PlacementTolerancePx < 0 {
+		return fmt.Errorf("placementTolerancePx cannot be negative")
 	}
 	managed := map[int]struct{}{}
 	for _, ws := range c.ManagedWorkspaces {

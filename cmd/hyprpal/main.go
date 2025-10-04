@@ -17,6 +17,7 @@ import (
 	"github.com/hyprpal/hyprpal/internal/control"
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/ipc"
+	"github.com/hyprpal/hyprpal/internal/layout"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/util"
 )
@@ -77,7 +78,10 @@ func main() {
 		exitErr(fmt.Errorf("configure dispatch strategy: %w", err))
 	}
 	logger.Infof("using %s dispatch strategy", strategy)
-	eng := engine.New(hypr, logger, modes, *dryRun, cfg.RedactTitles)
+	eng := engine.New(hypr, logger, modes, *dryRun, cfg.RedactTitles, layout.Gaps{
+		Inner: cfg.Gaps.Inner,
+		Outer: cfg.Gaps.Outer,
+	}, cfg.PlacementTolerancePx)
 	if *startMode != "" {
 		if err := eng.SetMode(*startMode); err != nil {
 			logger.Warnf("failed to set mode %s: %v", *startMode, err)
@@ -99,6 +103,10 @@ func main() {
 		}
 		eng.ReloadModes(modes)
 		eng.SetRedactTitles(cfg.RedactTitles)
+		eng.SetLayoutParameters(layout.Gaps{
+			Inner: cfg.Gaps.Inner,
+			Outer: cfg.Gaps.Outer,
+		}, cfg.PlacementTolerancePx)
 		if err := eng.Reconcile(ctx); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
