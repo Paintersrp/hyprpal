@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hyprpal/hypr-smartd/internal/util"
+	"github.com/hyprpal/hyprpal/internal/util"
 )
 
 // Event represents a Hyprland event stream payload.

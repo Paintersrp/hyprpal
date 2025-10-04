@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hyprpal/hypr-smartd/internal/config"
+	"github.com/hyprpal/hyprpal/internal/config"
 )
 
 // Rule represents a compiled rule ready for evaluation.

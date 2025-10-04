@@ -1,4 +1,4 @@
-module github.com/hyprpal/hypr-smartd
+module github.com/hyprpal/hyprpal
 
 go 1.22
 

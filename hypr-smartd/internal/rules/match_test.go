@@ -3,8 +3,8 @@ package rules
 import (
 	"testing"
 
-	"github.com/hyprpal/hypr-smartd/internal/config"
-	"github.com/hyprpal/hypr-smartd/internal/state"
+	"github.com/hyprpal/hyprpal/internal/config"
+	"github.com/hyprpal/hyprpal/internal/state"
 )
 
 func worldFixture(t *testing.T, activeIndex int, clients ...state.Client) *state.World {

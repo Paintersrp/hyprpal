@@ -5,10 +5,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hyprpal/hypr-smartd/internal/config"
-	"github.com/hyprpal/hypr-smartd/internal/layout"
-	"github.com/hyprpal/hypr-smartd/internal/state"
-	"github.com/hyprpal/hypr-smartd/internal/util"
+	"github.com/hyprpal/hyprpal/internal/config"
+	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/state"
+	"github.com/hyprpal/hyprpal/internal/util"
 )
 
 // ActionContext is passed to action planners.

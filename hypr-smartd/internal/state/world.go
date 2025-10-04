@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hyprpal/hypr-smartd/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/layout"
 )
 
 // Client describes a Hyprland client window.

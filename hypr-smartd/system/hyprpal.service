@@ -1,10 +1,10 @@
 [Unit]
-Description=hypr-smartd layout daemon
+Description=hyprpal layout daemon
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/hypr-smartd --config %h/.config/hypr-smartd/config.yaml
+ExecStart=%h/.local/bin/hyprpal --config %h/.config/hyprpal/config.yaml
 Restart=on-failure
 RestartSec=2
 
