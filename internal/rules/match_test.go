@@ -125,3 +125,65 @@ func TestAppsPresentRequiresAllClasses(t *testing.T) {
 		t.Fatalf("expected apps.present predicate to fail when a class is missing")
 	}
 }
+
+func TestPredicateTracerProducesTrace(t *testing.T) {
+	cfg := config.PredicateConfig{
+		All: []config.PredicateConfig{
+			{Mode: "Coding"},
+			{Any: []config.PredicateConfig{{AppClass: "Slack"}, {AppClass: "Discord"}}},
+		},
+		MonitorName: "DP-1",
+	}
+	pred, tracer, err := BuildPredicateWithTrace(cfg)
+	if err != nil {
+		t.Fatalf("build predicate with trace: %v", err)
+	}
+	world := worldFixture(t, 0, state.Client{Address: "0x999", Class: "Slack", Title: "Daily Standup"})
+	ctx := EvalContext{Mode: "Coding", World: world}
+	if !pred(ctx) {
+		t.Fatalf("expected predicate to match composite conditions")
+	}
+	matched, trace := tracer.Trace(ctx)
+	if !matched {
+		t.Fatalf("expected tracer match result to be true")
+	}
+	if trace == nil {
+		t.Fatalf("expected trace tree")
+	}
+	if trace.Kind != "predicate" {
+		t.Fatalf("expected root trace kind 'predicate', got %q", trace.Kind)
+	}
+	if node := findTraceByKind(trace, "any"); node == nil || !node.Result {
+		t.Fatalf("expected 'any' node to succeed")
+	}
+	if node := findTraceByKind(trace, "mode"); node == nil || !node.Result {
+		t.Fatalf("expected mode node to succeed")
+	}
+
+	ctxNoMatch := EvalContext{Mode: "Gaming", World: world}
+	if pred(ctxNoMatch) {
+		t.Fatalf("expected predicate to fail when mode mismatches")
+	}
+	matched, trace = tracer.Trace(ctxNoMatch)
+	if matched {
+		t.Fatalf("expected tracer match result to be false")
+	}
+	if node := findTraceByKind(trace, "mode"); node == nil || node.Result {
+		t.Fatalf("expected mode node to report failure")
+	}
+}
+
+func findTraceByKind(trace *PredicateTrace, kind string) *PredicateTrace {
+	if trace == nil {
+		return nil
+	}
+	if trace.Kind == kind {
+		return trace
+	}
+	for _, child := range trace.Children {
+		if found := findTraceByKind(child, kind); found != nil {
+			return found
+		}
+	}
+	return nil
+}
