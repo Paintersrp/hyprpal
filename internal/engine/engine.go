@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,11 +29,18 @@ type Engine struct {
 	activeMode string
 	dryRun     bool
 
-	mu        sync.Mutex
-	debounce  map[string]time.Time
-	cooldown  map[string]time.Time
-	lastWorld *state.World
+	mu          sync.Mutex
+	debounce    map[string]time.Time
+	cooldown    map[string]time.Time
+	execHistory map[string][]time.Time
+	lastWorld   *state.World
 }
+
+const (
+	ruleBurstWindow    = 5 * time.Second
+	ruleBurstThreshold = 3
+	ruleBurstCooldown  = 5 * time.Second
+)
 
 type plannedRule struct {
 	Key  string
@@ -61,14 +69,15 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		active = order[0]
 	}
 	return &Engine{
-		hyprctl:    hyprctl,
-		logger:     logger,
-		modes:      modeMap,
-		modeOrder:  order,
-		activeMode: active,
-		dryRun:     dryRun,
-		debounce:   make(map[string]time.Time),
-		cooldown:   make(map[string]time.Time),
+		hyprctl:     hyprctl,
+		logger:      logger,
+		modes:       modeMap,
+		modeOrder:   order,
+		activeMode:  active,
+		dryRun:      dryRun,
+		debounce:    make(map[string]time.Time),
+		cooldown:    make(map[string]time.Time),
+		execHistory: make(map[string][]time.Time),
 	}
 }
 
@@ -105,6 +114,7 @@ func (e *Engine) ReloadModes(modes []rules.Mode) {
 	}
 	e.debounce = make(map[string]time.Time)
 	e.cooldown = make(map[string]time.Time)
+	e.execHistory = make(map[string][]time.Time)
 	e.logger.Infof("reloaded %d modes", len(order))
 }
 
@@ -275,6 +285,13 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 		if len(rulePlan.Commands) == 0 {
 			continue
 		}
+		throttled := e.trackExecution(key, rulePlan, now)
+		if throttled {
+			if log {
+				e.logger.Warnf("rule %s temporarily disabled after %d executions in %s [mode %s]", rule.Name, ruleBurstThreshold, ruleBurstWindow, activeMode)
+			}
+			continue
+		}
 		plan.Merge(rulePlan)
 		planned = append(planned, plannedRule{
 			Key:  key,
@@ -306,6 +323,41 @@ func (e *Engine) applyCooldown(rules []plannedRule, until time.Time) {
 	for _, pr := range rules {
 		e.cooldown[pr.Key] = until
 	}
+}
+
+func (e *Engine) trackExecution(ruleKey string, plan layout.Plan, now time.Time) bool {
+	sig := executionSignature(ruleKey, plan)
+	windowStart := now.Add(-ruleBurstWindow)
+
+	e.mu.Lock()
+	history := e.execHistory[sig]
+	pruned := history[:0]
+	for _, ts := range history {
+		if ts.After(windowStart) {
+			pruned = append(pruned, ts)
+		}
+	}
+	pruned = append(pruned, now)
+	e.execHistory[sig] = pruned
+	exceeded := len(pruned) > ruleBurstThreshold
+	if exceeded {
+		e.cooldown[ruleKey] = now.Add(ruleBurstCooldown)
+	}
+	e.mu.Unlock()
+	return exceeded
+}
+
+func executionSignature(ruleKey string, plan layout.Plan) string {
+	var b strings.Builder
+	b.WriteString(ruleKey)
+	b.WriteString("|")
+	for i, cmd := range plan.Commands {
+		if i > 0 {
+			b.WriteString(";")
+		}
+		b.WriteString(strings.Join(cmd, " "))
+	}
+	return b.String()
 }
 
 func (e *Engine) isInteresting(kind string) bool {
