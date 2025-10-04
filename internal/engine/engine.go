@@ -27,13 +27,13 @@ type Engine struct {
 	hyprctl hyprctlClient
 	logger  *util.Logger
 
-	modes              map[string]rules.Mode
-	modeOrder          []string
-	activeMode         string
-	dryRun             bool
-	redactTitles       bool
-	gaps               layout.Gaps
-	placementTolerance float64
+	modes        map[string]rules.Mode
+	modeOrder    []string
+	activeMode   string
+	dryRun       bool
+	redactTitles bool
+	gaps         layout.Gaps
+	tolerancePx  float64
 
 	mu          sync.Mutex
 	debounce    map[string]time.Time
@@ -83,7 +83,7 @@ type ruleCheckHistory struct {
 }
 
 // New creates a new engine instance.
-func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool, gaps layout.Gaps, placementTolerance float64) *Engine {
+func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool, gaps layout.Gaps, tolerancePx float64) *Engine {
 	modeMap := make(map[string]rules.Mode)
 	order := make([]string, 0, len(modes))
 	for _, m := range modes {
@@ -95,20 +95,20 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		active = order[0]
 	}
 	return &Engine{
-		hyprctl:            hyprctl,
-		logger:             logger,
-		modes:              modeMap,
-		modeOrder:          order,
-		activeMode:         active,
-		dryRun:             dryRun,
-		redactTitles:       redactTitles,
-		gaps:               gaps,
-		placementTolerance: placementTolerance,
-		debounce:           make(map[string]time.Time),
-		cooldown:           make(map[string]time.Time),
-		execHistory:        make(map[string][]time.Time),
-		evalLog:            newEvaluationLog(0),
-		ruleChecks:         newRuleCheckHistory(0),
+		hyprctl:      hyprctl,
+		logger:       logger,
+		modes:        modeMap,
+		modeOrder:    order,
+		activeMode:   active,
+		dryRun:       dryRun,
+		redactTitles: redactTitles,
+		gaps:         gaps,
+		tolerancePx:  tolerancePx,
+		debounce:     make(map[string]time.Time),
+		cooldown:     make(map[string]time.Time),
+		execHistory:  make(map[string][]time.Time),
+		evalLog:      newEvaluationLog(0),
+		ruleChecks:   newRuleCheckHistory(0),
 	}
 }
 
@@ -178,7 +178,7 @@ func (e *Engine) SetRedactTitles(enabled bool) {
 func (e *Engine) SetLayoutParameters(gaps layout.Gaps, tolerance float64) {
 	e.mu.Lock()
 	e.gaps = gaps
-	e.placementTolerance = tolerance
+	e.tolerancePx = tolerance
 	e.mu.Unlock()
 }
 
@@ -374,7 +374,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 	activeMode := e.activeMode
 	mode, ok := e.modes[activeMode]
 	gaps := e.gaps
-	tolerance := e.placementTolerance
+	tolerance := e.tolerancePx
 	e.mu.Unlock()
 	if !ok {
 		if log {
@@ -431,13 +431,13 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 		rulePlan := layout.Plan{}
 		for _, action := range rule.Actions {
 			p, err := action.Plan(rules.ActionContext{
-				World:              world,
-				Logger:             e.logger,
-				RuleName:           rule.Name,
-				ManagedWorkspaces:  rule.ManagedWorkspaces,
-				AllowUnmanaged:     rule.AllowUnmanaged,
-				Gaps:               gaps,
-				PlacementTolerance: tolerance,
+				World:             world,
+				Logger:            e.logger,
+				RuleName:          rule.Name,
+				ManagedWorkspaces: rule.ManagedWorkspaces,
+				AllowUnmanaged:    rule.AllowUnmanaged,
+				Gaps:              gaps,
+				TolerancePx:       tolerance,
 			})
 			if err != nil {
 				e.logger.Errorf("rule %s action error: %v", rule.Name, err)

@@ -92,7 +92,7 @@ managedWorkspaces:
 gaps:
   inner: 8
   outer: 20
-placementTolerancePx: 2
+tolerancePx: 2
 modes:
   - name: Coding
     rules:
@@ -121,7 +121,7 @@ modes:
               target: active
 ```
 
-Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `managedWorkspaces` scopes hyprpal’s actions to the listed workspace IDs by default—rules will be skipped elsewhere unless they set `allowUnmanaged: true`. Leaving the list empty allows every workspace to be managed. Use the root-level `gaps` block to mirror your Hyprland gap settings (outer gap trims the monitor rectangle, inner gap is placed between floated windows). `placementTolerancePx` controls how much wiggle room hyprpal allows when comparing rectangles for idempotence; keep it aligned with Hyprland’s rounding behavior (default `2px`, or `0` for exact matches). `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads. Runtime flags such as `--dispatch=socket|hyprctl`, `--dry-run`, `--log-level`, and `--mode` let you adjust behavior without editing the config file.
+Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `managedWorkspaces` scopes hyprpal’s actions to the listed workspace IDs by default—rules will be skipped elsewhere unless they set `allowUnmanaged: true`. Leaving the list empty allows every workspace to be managed. Use the root-level `gaps` block to mirror your Hyprland gap settings (outer gap trims the monitor rectangle, inner gap is placed between floated windows). `tolerancePx` controls how much wiggle room hyprpal allows when comparing rectangles for idempotence; keep it aligned with Hyprland’s rounding behavior (default `2px`, or `0` for exact matches). `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads. Runtime flags such as `--dispatch=socket|hyprctl`, `--dry-run`, `--log-level`, and `--mode` let you adjust behavior without editing the config file.
 
 ### Adjust presets for your setup
 
