@@ -55,14 +55,14 @@ Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the
 
 - `make build` – compile to `bin/hypr-smartd`.
 - `make run` – run the daemon against `configs/example.yaml`.
-- `make install` – install the binary to your Go `$GOBIN`.
+- `make install` – install the binary to `~/.local/bin` (override with `INSTALL_DIR=...`).
 - `make service` – reload and start the user service.
 - `make lint` – run `go vet` plus a `gofmt` check.
 - `make test` – execute unit tests.
 
 ## Systemd (user) service
 
-Install the binary with `make install`, copy `system/hypr-smartd.service` to `~/.config/systemd/user/`, then enable it:
+Install the binary with `make install` (which places it at `~/.local/bin/hypr-smartd` by default), copy `system/hypr-smartd.service` to `~/.config/systemd/user/`, then enable it:
 
 ```bash
 mkdir -p ~/.config/systemd/user/

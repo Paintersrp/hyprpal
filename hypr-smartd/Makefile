@@ -1,4 +1,5 @@
 BINARY=bin/hypr-smartd
+INSTALL_DIR?=$(HOME)/.local/bin
 
 .PHONY: build run install service lint test
 
@@ -10,7 +11,8 @@ run:
 	go run ./cmd/hypr-smartd --config configs/example.yaml
 
 install:
-	go install ./cmd/hypr-smartd
+	mkdir -p $(INSTALL_DIR)
+	GOBIN=$(INSTALL_DIR) go install ./cmd/hypr-smartd
 
 service:
 	systemctl --user daemon-reload
