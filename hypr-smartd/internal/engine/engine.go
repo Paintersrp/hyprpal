@@ -13,9 +13,14 @@ import (
 	"github.com/hyprpal/hypr-smartd/internal/util"
 )
 
+type hyprctlClient interface {
+	state.DataSource
+	layout.Dispatcher
+}
+
 // Engine ties together the world model, rules, and IPC.
 type Engine struct {
-	hyprctl *ipc.Client
+	hyprctl hyprctlClient
 	logger  *util.Logger
 
 	modes      map[string]rules.Mode
@@ -29,7 +34,7 @@ type Engine struct {
 }
 
 // New creates a new engine instance.
-func New(hyprctl *ipc.Client, logger *util.Logger, modes []rules.Mode, dryRun bool) *Engine {
+func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool) *Engine {
 	modeMap := make(map[string]rules.Mode)
 	order := make([]string, 0, len(modes))
 	for _, m := range modes {
@@ -139,6 +144,7 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 		last := e.debounce[key]
 		e.mu.Unlock()
 		if !last.IsZero() && now.Sub(last) < rule.Debounce {
+			e.logger.Infof("rule %s skipped (debounced) [mode %s]", rule.Name, activeMode)
 			continue
 		}
 		if !rule.When(rules.EvalContext{Mode: e.activeMode, World: world}) {
