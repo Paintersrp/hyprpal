@@ -47,7 +47,7 @@ func SplitSidecar(monitor Rect, side string, widthPercent float64) (main Rect, d
 
 // ApproximatelyEqual reports whether two rects are almost equal.
 func ApproximatelyEqual(a, b Rect) bool {
-	const eps = 1.0
+	const eps = 2.0
 	return math.Abs(a.X-b.X) < eps && math.Abs(a.Y-b.Y) < eps &&
 		math.Abs(a.Width-b.Width) < eps && math.Abs(a.Height-b.Height) < eps
 }

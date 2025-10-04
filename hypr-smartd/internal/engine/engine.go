@@ -146,7 +146,11 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 		}
 		rulePlan := layout.Plan{}
 		for _, action := range rule.Actions {
-			p, err := action.Plan(rules.ActionContext{World: world})
+			p, err := action.Plan(rules.ActionContext{
+				World:    world,
+				Logger:   e.logger,
+				RuleName: rule.Name,
+			})
 			if err != nil {
 				e.logger.Errorf("rule %s action error: %v", rule.Name, err)
 				continue

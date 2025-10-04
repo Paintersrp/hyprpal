@@ -1,6 +1,14 @@
 package rules
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/hyprpal/hypr-smartd/internal/layout"
+	"github.com/hyprpal/hypr-smartd/internal/state"
+	"github.com/hyprpal/hypr-smartd/internal/util"
+)
 
 func TestBuildSidecarDockRejectsNarrowWidth(t *testing.T) {
 	_, err := buildSidecarDock(map[string]interface{}{
@@ -21,5 +29,56 @@ func TestBuildSidecarDockRejectsWideWidth(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error for widthPercent above maximum")
+	}
+}
+
+func TestSidecarDockPlanIdempotentLogs(t *testing.T) {
+	action := &SidecarDockAction{
+		WorkspaceID:  1,
+		Side:         "right",
+		WidthPercent: 25,
+		Match:        func(state.Client) bool { return true },
+	}
+
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xabc",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+			Geometry:    layout.Rect{X: 0, Y: 0, Width: 800, Height: 600},
+		}},
+		Workspaces: []state.Workspace{{ID: 1, MonitorName: "DP-1"}},
+		Monitors: []state.Monitor{{
+			Name:      "DP-1",
+			Rectangle: layout.Rect{X: 0, Y: 0, Width: 1600, Height: 900},
+		}},
+	}
+
+	_, dock := layout.SplitSidecar(world.Monitors[0].Rectangle, action.Side, action.WidthPercent)
+
+	buf := &bytes.Buffer{}
+	logger := util.NewLoggerWithWriter(util.LevelInfo, buf)
+	ctx := ActionContext{World: world, Logger: logger, RuleName: "sidecar"}
+
+	plan, err := action.Plan(ctx)
+	if err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+	if len(plan.Commands) == 0 {
+		t.Fatalf("expected commands on first plan when geometry differs")
+	}
+
+	world.Clients[0].Geometry = dock
+
+	secondPlan, err := action.Plan(ctx)
+	if err != nil {
+		t.Fatalf("second plan failed: %v", err)
+	}
+	if len(secondPlan.Commands) != 0 {
+		t.Fatalf("expected no commands when geometry already matches")
+	}
+
+	if !strings.Contains(buf.String(), "rule sidecar skipped (idempotent)") {
+		t.Fatalf("expected idempotent skip log, got %q", buf.String())
 	}
 }

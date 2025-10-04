@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -32,7 +33,12 @@ type Logger struct {
 
 // NewLogger creates a level-aware logger writing to stderr.
 func NewLogger(level LogLevel) *Logger {
-	l := &Logger{base: log.New(os.Stderr, "", log.LstdFlags|log.Lmsgprefix)}
+	return NewLoggerWithWriter(level, os.Stderr)
+}
+
+// NewLoggerWithWriter creates a level-aware logger writing to the provided destination.
+func NewLoggerWithWriter(level LogLevel, w io.Writer) *Logger {
+	l := &Logger{base: log.New(w, "", log.LstdFlags|log.Lmsgprefix)}
 	l.level.Store(int32(level))
 	return l
 }
