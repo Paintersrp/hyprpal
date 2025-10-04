@@ -1,6 +1,9 @@
 package layout
 
-import "math"
+import (
+	"math"
+	"strings"
+)
 
 // Rect represents a floating window geometry in logical pixels.
 type Rect struct {
@@ -17,6 +20,7 @@ func SplitSidecar(monitor Rect, side string, widthPercent float64) (main Rect, d
 		minWidth     = 10
 		maxWidth     = 50
 	)
+	side = strings.ToLower(side)
 	if widthPercent <= 0 {
 		widthPercent = defaultWidth
 	}

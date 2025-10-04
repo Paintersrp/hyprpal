@@ -73,8 +73,12 @@ func buildSidecarDock(params map[string]interface{}) (Action, error) {
 		return nil, err
 	}
 	side, _ := stringFrom(params, "side")
+	side = strings.ToLower(side)
 	if side == "" {
 		side = "right"
+	}
+	if side != "left" && side != "right" {
+		return nil, fmt.Errorf("side must be left or right, got %q", side)
 	}
 	width, err := floatFrom(params, "widthPercent", 25)
 	if err != nil {
@@ -82,6 +86,9 @@ func buildSidecarDock(params map[string]interface{}) (Action, error) {
 	}
 	if width < 10 {
 		return nil, fmt.Errorf("widthPercent must be at least 10, got %v", width)
+	}
+	if width > 50 {
+		return nil, fmt.Errorf("widthPercent must be at most 50, got %v", width)
 	}
 	matcher, err := parseClientMatcher(params["match"])
 	if err != nil {
