@@ -1,0 +1,47 @@
+# Example Hyprpal preset for creators capturing and monitoring a stream.
+managedWorkspaces:
+  - 7
+  - 8
+  - 9
+modes:
+  - name: Streaming
+    rules:
+      - name: Keep OBS centered on control workspace
+        when:
+          all:
+            - mode: Streaming
+            - workspace.id: 7
+            - app.class: obs
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: active
+      - name: Dock chat and alerts on auxiliary monitor
+        when:
+          all:
+            - mode: Streaming
+            - workspace.id: 8
+            - monitor.name: HDMI-A-1
+            - apps.present: [firefox, chromium]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 8
+              side: right
+              widthPercent: 35
+              match:
+                anyClass: [firefox, chromium]
+      - name: Keep music player slim on preview workspace
+        when:
+          all:
+            - mode: Streaming
+            - workspace.id: 9
+            - apps.present: [spotify]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 9
+              side: left
+              widthPercent: 25
+              match:
+                class: spotify

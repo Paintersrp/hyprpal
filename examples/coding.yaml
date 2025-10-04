@@ -1,0 +1,49 @@
+# Example Hyprpal preset for a development-focused workstation.
+managedWorkspaces:
+  - 1
+  - 2
+  - 3
+modes:
+  - name: Coding
+    rules:
+      - name: Keep IDE primary on workspace 1
+        when:
+          all:
+            - mode: Coding
+            - workspace.id: 1
+            - monitor.name: DP-1
+            - app.class: code
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: active
+      - name: Dock terminal companion
+        when:
+          all:
+            - mode: Coding
+            - workspace.id: 1
+            - monitor.name: DP-1
+            - apps.present: [Alacritty]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 1
+              side: left
+              widthPercent: 30
+              match:
+                class: Alacritty
+      - name: Pin communications on workspace 3
+        when:
+          all:
+            - mode: Coding
+            - workspace.id: 3
+            - monitor.name: HDMI-A-1
+            - apps.present: [Slack, discord]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 3
+              side: right
+              widthPercent: 25
+              match:
+                anyClass: [Slack, discord]
