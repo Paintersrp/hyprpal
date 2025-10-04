@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hyprpal/hypr-smartd/internal/config"
-	"github.com/hyprpal/hypr-smartd/internal/state"
+	"github.com/hyprpal/hyprpal/internal/config"
+	"github.com/hyprpal/hyprpal/internal/state"
 )
 
 // EvalContext contains world snapshot and currently selected mode.

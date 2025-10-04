@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/hyprpal/hypr-smartd/internal/layout"
-	"github.com/hyprpal/hypr-smartd/internal/state"
+	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/state"
 )
 
 // Client wraps hyprctl shell-outs.

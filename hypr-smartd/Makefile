@@ -1,22 +1,22 @@
-BINARY=bin/hypr-smartd
+BINARY=bin/hyprpal
 INSTALL_DIR?=$(HOME)/.local/bin
 
 .PHONY: build run install service lint test
 
 build:
-	mkdir -p bin
-	go build -o $(BINARY) ./cmd/hypr-smartd
+        mkdir -p bin
+        go build -o $(BINARY) ./cmd/hyprpal
 
 run:
-	go run ./cmd/hypr-smartd --config configs/example.yaml
+        go run ./cmd/hyprpal --config configs/example.yaml
 
 install:
-	mkdir -p $(INSTALL_DIR)
-	GOBIN=$(INSTALL_DIR) go install ./cmd/hypr-smartd
+        mkdir -p $(INSTALL_DIR)
+        GOBIN=$(INSTALL_DIR) go install ./cmd/hyprpal
 
 service:
-	systemctl --user daemon-reload
-	systemctl --user enable --now hypr-smartd.service
+        systemctl --user daemon-reload
+        systemctl --user enable --now hyprpal.service
 
 lint:
 	go vet ./...

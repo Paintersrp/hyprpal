@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hyprpal/hypr-smartd/internal/layout"
-	"github.com/hyprpal/hypr-smartd/internal/state"
-	"github.com/hyprpal/hypr-smartd/internal/util"
+	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/state"
+	"github.com/hyprpal/hyprpal/internal/util"
 )
 
 func TestBuildSidecarDockRejectsNarrowWidth(t *testing.T) {

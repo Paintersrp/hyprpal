@@ -1,6 +1,6 @@
-# hypr-smartd
+# hyprpal
 
-`hypr-smartd` is a small companion daemon for [Hyprland](https://hyprland.org/) that listens to compositor events, maintains a live world snapshot of monitors/workspaces/clients, and applies declarative layout rules. v0.1 ships with sidecar docking and fullscreen enforcement actions so you can keep communication apps docked while focusing on your main workspace or go distraction-free in Gaming mode.
+`hyprpal` is a small companion daemon for [Hyprland](https://hyprland.org/) that listens to compositor events, maintains a live world snapshot of monitors/workspaces/clients, and applies declarative layout rules. v0.1 ships with sidecar docking and fullscreen enforcement actions so you can keep communication apps docked while focusing on your main workspace or go distraction-free in Gaming mode.
 
 ## Quick Start
 
@@ -9,7 +9,7 @@
    ```bash
    make build
    ```
-3. Copy `configs/example.yaml` to `~/.config/hypr-smartd/config.yaml` and edit it for your workspace/app names.
+3. Copy `configs/example.yaml` to `~/.config/hyprpal/config.yaml` and edit it for your workspace/app names.
 4. Run the daemon from your session:
    ```bash
    make run
@@ -17,7 +17,7 @@
    Use `--dry-run` to preview dispatches without affecting windows.
 5. Follow logs while iterating:
    ```bash
-   journalctl --user -fu hypr-smartd
+   journalctl --user -fu hyprpal
    ```
 
 ## Configuration
@@ -53,11 +53,11 @@ modes:
               target: active
 ```
 
-Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hypr-smartd`) for manual reloads.
+Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads.
 
 ## Makefile targets
 
-- `make build` – compile to `bin/hypr-smartd`.
+- `make build` – compile to `bin/hyprpal`.
 - `make run` – run the daemon against `configs/example.yaml`.
 - `make install` – install the binary to `~/.local/bin` (override with `INSTALL_DIR=...`).
 - `make service` – reload and start the user service.
@@ -66,20 +66,20 @@ Place the configuration at `~/.config/hypr-smartd/config.yaml` to align with the
 
 ## Systemd (user) service
 
-Install the binary with `make install` (which places it at `~/.local/bin/hypr-smartd` by default), copy `system/hypr-smartd.service` to `~/.config/systemd/user/`, then enable it:
+Install the binary with `make install` (which places it at `~/.local/bin/hyprpal` by default), copy `system/hyprpal.service` to `~/.config/systemd/user/`, then enable it:
 
 ```bash
 mkdir -p ~/.config/systemd/user/
-cp system/hypr-smartd.service ~/.config/systemd/user/
+cp system/hyprpal.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now hypr-smartd.service
-journalctl --user -fu hypr-smartd
+systemctl --user enable --now hyprpal.service
+journalctl --user -fu hyprpal
 ```
 
 ## Acceptance smoke test
 
 1. Start Hyprland and open Slack/Discord plus your editor on workspace 3.
-2. Run `hypr-smartd --mode Coding`.
+2. Run `hyprpal --mode Coding`.
 3. Observe a log similar to:
    ```
    [INFO] DRY-RUN dispatch: [setfloatingaddress address:0xabc 1]
@@ -87,7 +87,7 @@ journalctl --user -fu hypr-smartd
    [INFO] DRY-RUN dispatch: [resizewindowpixel exact 480 1440]
    ```
 4. Re-run without `--dry-run` to apply the sidecar.
-5. Switch to Gaming mode (`hypr-smartd --mode Gaming`) and launch a game window; it will be forced fullscreen.
+5. Switch to Gaming mode (`hyprpal --mode Gaming`) and launch a game window; it will be forced fullscreen.
 
 ## Roadmap (v0.1 → v0.2)
 

@@ -11,16 +11,16 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/hyprpal/hypr-smartd/internal/config"
-	"github.com/hyprpal/hypr-smartd/internal/engine"
-	"github.com/hyprpal/hypr-smartd/internal/ipc"
-	"github.com/hyprpal/hypr-smartd/internal/rules"
-	"github.com/hyprpal/hypr-smartd/internal/util"
+	"github.com/hyprpal/hyprpal/internal/config"
+	"github.com/hyprpal/hyprpal/internal/engine"
+	"github.com/hyprpal/hyprpal/internal/ipc"
+	"github.com/hyprpal/hyprpal/internal/rules"
+	"github.com/hyprpal/hyprpal/internal/util"
 )
 
 func main() {
 	home, _ := os.UserHomeDir()
-	defaultConfig := filepath.Join(home, ".config", "hypr-smartd", "config.yaml")
+	defaultConfig := filepath.Join(home, ".config", "hyprpal", "config.yaml")
 
 	cfgPath := flag.String("config", defaultConfig, "path to YAML config")
 	dryRun := flag.Bool("dry-run", false, "do not dispatch commands")

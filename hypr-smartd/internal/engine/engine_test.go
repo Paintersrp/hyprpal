@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyprpal/hypr-smartd/internal/layout"
-	"github.com/hyprpal/hypr-smartd/internal/rules"
-	"github.com/hyprpal/hypr-smartd/internal/state"
-	"github.com/hyprpal/hypr-smartd/internal/util"
+	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/rules"
+	"github.com/hyprpal/hyprpal/internal/state"
+	"github.com/hyprpal/hyprpal/internal/util"
 )
 
 type fakeHyprctl struct {
