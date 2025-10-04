@@ -9,7 +9,8 @@ import (
 
 // Config is the top-level configuration document.
 type Config struct {
-	Modes []ModeConfig `yaml:"modes"`
+	ManagedWorkspaces []int        `yaml:"managedWorkspaces"`
+	Modes             []ModeConfig `yaml:"modes"`
 }
 
 // ModeConfig represents a named mode with a set of rules.
@@ -20,10 +21,11 @@ type ModeConfig struct {
 
 // RuleConfig represents a declarative rule with predicates and actions.
 type RuleConfig struct {
-	Name       string          `yaml:"name"`
-	When       PredicateConfig `yaml:"when"`
-	Actions    []ActionConfig  `yaml:"actions"`
-	DebounceMs int             `yaml:"debounceMs"`
+	Name           string          `yaml:"name"`
+	When           PredicateConfig `yaml:"when"`
+	Actions        []ActionConfig  `yaml:"actions"`
+	DebounceMs     int             `yaml:"debounceMs"`
+	AllowUnmanaged bool            `yaml:"allowUnmanaged"`
 }
 
 // PredicateConfig implements the simple predicate tree language.
@@ -65,6 +67,16 @@ func Load(path string) (*Config, error) {
 func (c *Config) Validate() error {
 	if len(c.Modes) == 0 {
 		return fmt.Errorf("config must define at least one mode")
+	}
+	managed := map[int]struct{}{}
+	for _, ws := range c.ManagedWorkspaces {
+		if ws <= 0 {
+			return fmt.Errorf("managed workspace IDs must be positive, got %d", ws)
+		}
+		if _, exists := managed[ws]; exists {
+			return fmt.Errorf("duplicate managed workspace %d", ws)
+		}
+		managed[ws] = struct{}{}
 	}
 	names := map[string]struct{}{}
 	for _, m := range c.Modes {

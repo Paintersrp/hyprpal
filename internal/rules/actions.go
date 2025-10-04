@@ -13,9 +13,22 @@ import (
 
 // ActionContext is passed to action planners.
 type ActionContext struct {
-	World    *state.World
-	Logger   *util.Logger
-	RuleName string
+	World             *state.World
+	Logger            *util.Logger
+	RuleName          string
+	ManagedWorkspaces map[int]struct{}
+	AllowUnmanaged    bool
+}
+
+func (ctx ActionContext) workspaceAllowed(id int) bool {
+	if ctx.AllowUnmanaged {
+		return true
+	}
+	if len(ctx.ManagedWorkspaces) == 0 {
+		return true
+	}
+	_, ok := ctx.ManagedWorkspaces[id]
+	return ok
 }
 
 // Action produces layout operations for a rule.
@@ -162,6 +175,12 @@ func parseClientMatcher(v interface{}) (clientMatcher, error) {
 
 // Plan implements Action for SidecarDockAction.
 func (a *SidecarDockAction) Plan(ctx ActionContext) (layout.Plan, error) {
+	if !ctx.workspaceAllowed(a.WorkspaceID) {
+		if ctx.Logger != nil {
+			ctx.Logger.Infof("rule %s skipped (workspace %d unmanaged)", ctx.RuleName, a.WorkspaceID)
+		}
+		return layout.Plan{}, nil
+	}
 	var target *state.Client
 	for i := range ctx.World.Clients {
 		c := ctx.World.Clients[i]
@@ -206,6 +225,12 @@ func (a *FullscreenAction) Plan(ctx ActionContext) (layout.Plan, error) {
 		return layout.Plan{}, fmt.Errorf("unknown fullscreen target %q", a.Target)
 	}
 	if client == nil {
+		return layout.Plan{}, nil
+	}
+	if !ctx.workspaceAllowed(client.WorkspaceID) {
+		if ctx.Logger != nil {
+			ctx.Logger.Infof("rule %s skipped (workspace %d unmanaged)", ctx.RuleName, client.WorkspaceID)
+		}
 		return layout.Plan{}, nil
 	}
 	if client.FullscreenMode != 0 {

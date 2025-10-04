@@ -9,10 +9,12 @@ import (
 
 // Rule represents a compiled rule ready for evaluation.
 type Rule struct {
-	Name     string
-	When     Predicate
-	Actions  []Action
-	Debounce time.Duration
+	Name              string
+	When              Predicate
+	Actions           []Action
+	Debounce          time.Duration
+	AllowUnmanaged    bool
+	ManagedWorkspaces map[int]struct{}
 }
 
 // Mode aggregates rules under a named mode.
@@ -24,6 +26,10 @@ type Mode struct {
 // BuildModes compiles configuration into executable rule sets.
 func BuildModes(cfg *config.Config) ([]Mode, error) {
 	modes := make([]Mode, 0, len(cfg.Modes))
+	managed := map[int]struct{}{}
+	for _, ws := range cfg.ManagedWorkspaces {
+		managed[ws] = struct{}{}
+	}
 	for _, mode := range cfg.Modes {
 		compiled := Mode{Name: mode.Name}
 		for _, rc := range mode.Rules {
@@ -40,10 +46,12 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 				debounce = 500 * time.Millisecond
 			}
 			compiled.Rules = append(compiled.Rules, Rule{
-				Name:     rc.Name,
-				When:     pred,
-				Actions:  acts,
-				Debounce: debounce,
+				Name:              rc.Name,
+				When:              pred,
+				Actions:           acts,
+				Debounce:          debounce,
+				AllowUnmanaged:    rc.AllowUnmanaged,
+				ManagedWorkspaces: managed,
 			})
 		}
 		modes = append(modes, compiled)

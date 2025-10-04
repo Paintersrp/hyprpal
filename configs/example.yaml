@@ -1,4 +1,7 @@
 # Launch hyprpal with `--dispatch=socket|hyprctl` to match your environment.
+managedWorkspaces:
+  - 3
+  - 4
 modes:
   - name: Coding
     rules:
@@ -21,6 +24,7 @@ modes:
       - name: Fullscreen active game
         when:
           mode: Gaming
+        allowUnmanaged: true
         actions:
           - type: layout.fullscreen
             params:

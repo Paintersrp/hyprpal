@@ -272,9 +272,11 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 		rulePlan := layout.Plan{}
 		for _, action := range rule.Actions {
 			p, err := action.Plan(rules.ActionContext{
-				World:    world,
-				Logger:   e.logger,
-				RuleName: rule.Name,
+				World:             world,
+				Logger:            e.logger,
+				RuleName:          rule.Name,
+				ManagedWorkspaces: rule.ManagedWorkspaces,
+				AllowUnmanaged:    rule.AllowUnmanaged,
 			})
 			if err != nil {
 				e.logger.Errorf("rule %s action error: %v", rule.Name, err)
