@@ -9,7 +9,7 @@
    ```bash
    make build
    ```
-3. Copy `configs/example.yaml` to `~/.config/hyprpal/config.yaml` and edit it for your workspace/app names.
+3. Copy one of the presets from [`examples/`](./examples/) to `~/.config/hyprpal/config.yaml` (for example, `examples/dual-monitor/config.yaml`) and edit it for your workspace/app names.
 4. Run the daemon from your session:
    ```bash
    make run
@@ -66,7 +66,7 @@ When no actions are queued, `hsctl` prints `No pending actions`.
 
 ## Configuration
 
-Configuration is YAML with modes, rules, and actions. A condensed example:
+Configuration is YAML with modes, rules, and actions. Start by copying a preset from [`examples/`](./examples/)—each directory includes a `config.yaml` you can place at `~/.config/hyprpal/config.yaml` and a README describing its assumptions. A condensed example:
 
 ```yaml
 managedWorkspaces:
@@ -101,6 +101,10 @@ modes:
 ```
 
 Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `managedWorkspaces` scopes hyprpal’s actions to the listed workspace IDs by default—rules will be skipped elsewhere unless they set `allowUnmanaged: true`. Leaving the list empty allows every workspace to be managed. `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads. Runtime flags such as `--dispatch=socket|hyprctl`, `--dry-run`, `--log-level`, and `--mode` let you adjust behavior without editing the config file.
+
+### Adjust presets for your setup
+
+When reusing a preset, update monitor names, workspace IDs, and application classes to match your Hyprland environment. The accompanying READMEs in each [`examples/`](./examples/) preset (for instance, [`examples/dual-monitor/README.md`](./examples/dual-monitor/README.md)) call out the expected monitor names and client classes so you know what to tweak before copying the config. If you adopt multiple presets, consult each README to understand the assumptions around docking widths, preferred workspaces, and optional dependencies.
 
 ## Guardrails: loop protection & workspace scoping
 
