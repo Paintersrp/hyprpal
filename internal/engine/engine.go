@@ -2,7 +2,10 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -147,7 +150,10 @@ func (e *Engine) Run(ctx context.Context) error {
 			if !ok {
 				return fmt.Errorf("event stream closed")
 			}
-			e.logger.Debugf("event %s %s", ev.Kind, ev.Payload)
+			e.trace("event.received", map[string]any{
+				"kind":    ev.Kind,
+				"payload": ev.Payload,
+			})
 			if e.isInteresting(ev.Kind) {
 				if err := e.reconcileAndApply(ctx); err != nil {
 					e.logger.Errorf("reconcile failed: %v", err)
@@ -169,11 +175,28 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 		return err
 	}
 	e.mu.Lock()
+	prev := e.lastWorld
 	e.lastWorld = world
 	e.mu.Unlock()
 
+	counts := map[string]int{
+		"clients":    len(world.Clients),
+		"workspaces": len(world.Workspaces),
+		"monitors":   len(world.Monitors),
+	}
+	e.trace("world.reconciled", map[string]any{
+		"counts":          counts,
+		"activeWorkspace": world.ActiveWorkspaceID,
+		"activeClient":    world.ActiveClientAddress,
+		"delta":           worldDelta(prev, world),
+	})
+
 	now := time.Now()
 	plan, rules := e.evaluate(world, now, true)
+	e.trace("plan.aggregated", map[string]any{
+		"commandCount": len(plan.Commands),
+		"commands":     plan.Commands,
+	})
 	if len(plan.Commands) == 0 {
 		return nil
 	}
@@ -182,16 +205,30 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 
 	if e.dryRun {
 		for _, cmd := range plan.Commands {
-			e.logger.Infof("DRY-RUN dispatch: %v", cmd)
+			e.trace("dispatch.result", map[string]any{
+				"status":  "dry-run",
+				"command": cmd,
+			})
 		}
 		e.applyCooldown(rules, now.Add(1*time.Second))
 		return nil
 	}
 	if err := plan.Execute(e.hyprctl); err != nil {
+		for _, cmd := range plan.Commands {
+			e.trace("dispatch.result", map[string]any{
+				"status":  "error",
+				"command": cmd,
+				"error":   err.Error(),
+			})
+		}
 		return err
 	}
 	e.applyCooldown(rules, now.Add(1*time.Second))
 	for _, cmd := range plan.Commands {
+		e.trace("dispatch.result", map[string]any{
+			"status":  "applied",
+			"command": cmd,
+		})
 		e.logger.Infof("dispatched: %v", cmd)
 	}
 	return nil
@@ -295,6 +332,13 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 			continue
 		}
 		plan.Merge(rulePlan)
+		if log {
+			e.trace("rule.matched", map[string]any{
+				"mode":     activeMode,
+				"rule":     rule.Name,
+				"commands": rulePlan.Commands,
+			})
+		}
 		planned = append(planned, plannedRule{
 			Key:  key,
 			Mode: activeMode,
@@ -369,4 +413,161 @@ func (e *Engine) isInteresting(kind string) bool {
 	default:
 		return false
 	}
+}
+
+func (e *Engine) trace(event string, fields map[string]any) {
+	if e.logger == nil {
+		return
+	}
+	e.logger.Tracef("%s %s", event, formatTraceFields(fields))
+}
+
+func formatTraceFields(fields map[string]any) string {
+	if len(fields) == 0 {
+		return "{}"
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Quote(k))
+		b.WriteByte(':')
+		val, err := json.Marshal(fields[k])
+		if err != nil {
+			b.WriteString(strconv.Quote(fmt.Sprintf("<marshal error: %v>", err)))
+			continue
+		}
+		b.Write(val)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+func worldDelta(prev, curr *state.World) map[string]any {
+	if curr == nil {
+		return map[string]any{"changed": false}
+	}
+	if prev == nil {
+		return map[string]any{
+			"initial": true,
+			"changed": true,
+		}
+	}
+	delta := make(map[string]any)
+	changed := false
+
+	prevClients := make(map[string]struct{}, len(prev.Clients))
+	for _, c := range prev.Clients {
+		prevClients[c.Address] = struct{}{}
+	}
+	currClients := make(map[string]struct{}, len(curr.Clients))
+	for _, c := range curr.Clients {
+		currClients[c.Address] = struct{}{}
+	}
+	var addedClients, removedClients []string
+	for addr := range currClients {
+		if _, ok := prevClients[addr]; !ok {
+			addedClients = append(addedClients, addr)
+		}
+	}
+	for addr := range prevClients {
+		if _, ok := currClients[addr]; !ok {
+			removedClients = append(removedClients, addr)
+		}
+	}
+	sort.Strings(addedClients)
+	sort.Strings(removedClients)
+	if len(addedClients) > 0 {
+		delta["clientsAdded"] = addedClients
+		changed = true
+	}
+	if len(removedClients) > 0 {
+		delta["clientsRemoved"] = removedClients
+		changed = true
+	}
+
+	if prev.ActiveWorkspaceID != curr.ActiveWorkspaceID {
+		delta["activeWorkspace"] = map[string]int{
+			"from": prev.ActiveWorkspaceID,
+			"to":   curr.ActiveWorkspaceID,
+		}
+		changed = true
+	}
+	if prev.ActiveClientAddress != curr.ActiveClientAddress {
+		delta["activeClient"] = map[string]string{
+			"from": prev.ActiveClientAddress,
+			"to":   curr.ActiveClientAddress,
+		}
+		changed = true
+	}
+
+	prevWorkspaces := make(map[int]struct{}, len(prev.Workspaces))
+	for _, ws := range prev.Workspaces {
+		prevWorkspaces[ws.ID] = struct{}{}
+	}
+	currWorkspaces := make(map[int]struct{}, len(curr.Workspaces))
+	for _, ws := range curr.Workspaces {
+		currWorkspaces[ws.ID] = struct{}{}
+	}
+	var addedWorkspaces, removedWorkspaces []int
+	for id := range currWorkspaces {
+		if _, ok := prevWorkspaces[id]; !ok {
+			addedWorkspaces = append(addedWorkspaces, id)
+		}
+	}
+	for id := range prevWorkspaces {
+		if _, ok := currWorkspaces[id]; !ok {
+			removedWorkspaces = append(removedWorkspaces, id)
+		}
+	}
+	sort.Ints(addedWorkspaces)
+	sort.Ints(removedWorkspaces)
+	if len(addedWorkspaces) > 0 {
+		delta["workspacesAdded"] = addedWorkspaces
+		changed = true
+	}
+	if len(removedWorkspaces) > 0 {
+		delta["workspacesRemoved"] = removedWorkspaces
+		changed = true
+	}
+
+	prevMonitors := make(map[string]struct{}, len(prev.Monitors))
+	for _, mon := range prev.Monitors {
+		prevMonitors[mon.Name] = struct{}{}
+	}
+	currMonitors := make(map[string]struct{}, len(curr.Monitors))
+	for _, mon := range curr.Monitors {
+		currMonitors[mon.Name] = struct{}{}
+	}
+	var addedMonitors, removedMonitors []string
+	for name := range currMonitors {
+		if _, ok := prevMonitors[name]; !ok {
+			addedMonitors = append(addedMonitors, name)
+		}
+	}
+	for name := range prevMonitors {
+		if _, ok := currMonitors[name]; !ok {
+			removedMonitors = append(removedMonitors, name)
+		}
+	}
+	sort.Strings(addedMonitors)
+	sort.Strings(removedMonitors)
+	if len(addedMonitors) > 0 {
+		delta["monitorsAdded"] = addedMonitors
+		changed = true
+	}
+	if len(removedMonitors) > 0 {
+		delta["monitorsRemoved"] = removedMonitors
+		changed = true
+	}
+
+	delta["changed"] = changed
+	return delta
 }

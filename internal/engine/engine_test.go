@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -289,4 +290,183 @@ func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
 	if cooldownUntil.Before(time.Now()) {
 		t.Fatalf("expected cooldown to be in the future, got %v", cooldownUntil)
 	}
+}
+
+func TestTraceLoggingDryRunSequence(t *testing.T) {
+	baseWorld := &state.World{
+		Clients:             []state.Client{{Address: "addr-old", WorkspaceID: 1, MonitorName: "HDMI-A-1"}},
+		Workspaces:          []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		Monitors:            []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		ActiveWorkspaceID:   1,
+		ActiveClientAddress: "addr-old",
+	}
+	hypr := &fakeHyprctl{
+		clients: []state.Client{{Address: "addr-new", WorkspaceID: 2, MonitorName: "HDMI-A-1"}},
+		workspaces: []state.Workspace{
+			{ID: 1, Name: "1", MonitorName: "HDMI-A-1"},
+			{ID: 2, Name: "2", MonitorName: "HDMI-A-1"},
+		},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 2,
+		activeClient:    "addr-new",
+	}
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:addr-new")
+	plan.Add("movewindowpixel", "exact", "0", "0")
+	rule := rules.Rule{
+		Name:    "match",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelTrace, &logs)
+	eng := New(hypr, logger, []rules.Mode{mode}, true)
+	eng.mu.Lock()
+	eng.lastWorld = baseWorld
+	eng.mu.Unlock()
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+
+	if len(hypr.dispatched) != 0 {
+		t.Fatalf("expected no dispatches in dry-run, got %d", len(hypr.dispatched))
+	}
+
+	traceLines := extractTraceLines(t, logs.String())
+	expectedOrder := []string{"world.reconciled", "rule.matched", "plan.aggregated", "dispatch.result", "dispatch.result"}
+	if len(traceLines) != len(expectedOrder) {
+		t.Fatalf("expected %d trace lines, got %d: %v", len(expectedOrder), len(traceLines), traceLines)
+	}
+	for i, want := range expectedOrder {
+		if !strings.Contains(traceLines[i], want) {
+			t.Fatalf("expected trace line %d to contain %q, got %q", i, want, traceLines[i])
+		}
+	}
+
+	event, payload := parseTraceLine(t, traceLines[0])
+	if event != "world.reconciled" {
+		t.Fatalf("expected first event to be world.reconciled, got %s", event)
+	}
+	delta := payloadValue(t, payload, "delta").(map[string]any)
+	if !payloadBool(t, delta, "changed") {
+		t.Fatalf("expected delta to indicate change, got %v", delta)
+	}
+	clientsAdded := payloadStrings(t, delta, "clientsAdded")
+	if len(clientsAdded) != 1 || clientsAdded[0] != "addr-new" {
+		t.Fatalf("expected clientsAdded to contain addr-new, got %v", clientsAdded)
+	}
+	clientsRemoved := payloadStrings(t, delta, "clientsRemoved")
+	if len(clientsRemoved) != 1 || clientsRemoved[0] != "addr-old" {
+		t.Fatalf("expected clientsRemoved to contain addr-old, got %v", clientsRemoved)
+	}
+	activeWS := payloadValue(t, delta, "activeWorkspace").(map[string]any)
+	if intFromAny(t, activeWS["from"]) != 1 || intFromAny(t, activeWS["to"]) != 2 {
+		t.Fatalf("unexpected activeWorkspace delta: %v", activeWS)
+	}
+	activeClient := payloadValue(t, delta, "activeClient").(map[string]any)
+	if str, ok := activeClient["from"].(string); !ok || str != "addr-old" {
+		t.Fatalf("unexpected activeClient.from: %v", activeClient)
+	}
+	if str, ok := activeClient["to"].(string); !ok || str != "addr-new" {
+		t.Fatalf("unexpected activeClient.to: %v", activeClient)
+	}
+
+	_, rulePayload := parseTraceLine(t, traceLines[1])
+	if payloadValue(t, rulePayload, "mode").(string) != "Focus" {
+		t.Fatalf("expected rule mode Focus, got %v", rulePayload)
+	}
+
+	_, planPayload := parseTraceLine(t, traceLines[2])
+	if intFromAny(t, planPayload["commandCount"]) != 2 {
+		t.Fatalf("expected commandCount 2, got %v", planPayload)
+	}
+
+	for i := 3; i < len(traceLines); i++ {
+		_, dispatchPayload := parseTraceLine(t, traceLines[i])
+		if payloadValue(t, dispatchPayload, "status").(string) != "dry-run" {
+			t.Fatalf("expected dry-run status, got %v", dispatchPayload)
+		}
+	}
+}
+
+func extractTraceLines(t *testing.T, logData string) []string {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(logData), "\n")
+	var out []string
+	for _, line := range lines {
+		if strings.Contains(line, "[TRACE]") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func parseTraceLine(t *testing.T, line string) (string, map[string]any) {
+	t.Helper()
+	idx := strings.Index(line, "[TRACE] ")
+	if idx == -1 {
+		t.Fatalf("line does not contain trace marker: %q", line)
+	}
+	rest := line[idx+len("[TRACE] "):]
+	parts := strings.SplitN(rest, " ", 2)
+	if len(parts) != 2 {
+		t.Fatalf("unable to split trace line: %q", line)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(parts[1]), &payload); err != nil {
+		t.Fatalf("failed to unmarshal payload: %v (line: %q)", err, line)
+	}
+	return parts[0], payload
+}
+
+func payloadValue(t *testing.T, payload map[string]any, key string) any {
+	t.Helper()
+	val, ok := payload[key]
+	if !ok {
+		t.Fatalf("expected key %q in payload %v", key, payload)
+	}
+	return val
+}
+
+func payloadBool(t *testing.T, payload map[string]any, key string) bool {
+	t.Helper()
+	val := payloadValue(t, payload, key)
+	boolVal, ok := val.(bool)
+	if !ok {
+		t.Fatalf("expected bool for key %q, got %T", key, val)
+	}
+	return boolVal
+}
+
+func payloadStrings(t *testing.T, payload map[string]any, key string) []string {
+	t.Helper()
+	val := payloadValue(t, payload, key)
+	arr, ok := val.([]any)
+	if !ok {
+		t.Fatalf("expected slice for key %q, got %T", key, val)
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		str, ok := item.(string)
+		if !ok {
+			t.Fatalf("expected string in array %q, got %T", key, item)
+		}
+		out = append(out, str)
+	}
+	return out
+}
+
+func intFromAny(t *testing.T, val any) int {
+	t.Helper()
+	switch v := val.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		t.Fatalf("expected numeric type, got %T", val)
+	}
+	return 0
 }
