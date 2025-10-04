@@ -8,6 +8,13 @@ gaps:
   inner: 8  # pixels between floating windows
   outer: 20 # pixels around monitor edges
 placementTolerancePx: 2.0 # slack for idempotence checks; set 0 for exact matches
+profiles:
+  commsDock:
+    anyClass: [Slack, discord]
+  designReview:
+    class: Figma
+  fullscreenGames:
+    titleRegex: "(Proton|Steam|Game)"
 modes:
   - name: Coding
     rules:
@@ -24,7 +31,7 @@ modes:
               side: right
               widthPercent: 25 # allowed range: 10-50
               match:
-                anyClass: [Slack, discord]
+                profile: commsDock # reusable match profile defined above
       - name: Float design review on workspace 7
         when:
           all:
@@ -39,7 +46,7 @@ modes:
               side: left
               widthPercent: 30
               match:
-                class: Figma
+                profile: designReview
   - name: Gaming
     rules:
       - name: Fullscreen active game
@@ -58,4 +65,4 @@ modes:
             params:
               target: match
               match:
-                titleRegex: "(Proton|Steam|Game)"
+                profile: fullscreenGames

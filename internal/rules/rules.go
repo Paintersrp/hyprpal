@@ -38,7 +38,7 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 			if err != nil {
 				return nil, fmt.Errorf("rule %s: %w", rc.Name, err)
 			}
-			acts, err := BuildActions(rc.Actions)
+			acts, err := BuildActions(rc.Actions, cfg.Profiles)
 			if err != nil {
 				return nil, fmt.Errorf("rule %s: %w", rc.Name, err)
 			}
