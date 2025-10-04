@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/control"
-	"github.com/hyprpal/hyprpal/internal/state"
 )
 
 const (
@@ -29,13 +28,11 @@ type (
 	PlanCommand = control.PlanCommand
 	// PlanResult captures the commands returned by the daemon when planning.
 	PlanResult = control.PlanResult
+	// RuleEvaluation mirrors the inspector rule log entry returned by the daemon.
+	RuleEvaluation = control.RuleEvaluation
+	// InspectorState captures the daemon's inspector payload.
+	InspectorState = control.InspectorSnapshot
 )
-
-// InspectorState captures the daemon's last reconciled world snapshot alongside mode info.
-type InspectorState struct {
-	Mode  ModeStatus   `json:"mode"`
-	World *state.World `json:"world"`
-}
 
 // New creates a client that connects to the provided socket path. When path is
 // empty, the default runtime path is used.
@@ -83,10 +80,15 @@ func (c *Client) Plan(ctx context.Context, explain bool) (PlanResult, error) {
 	return result, nil
 }
 
-// Inspect retrieves the daemon's most recent world snapshot along with mode information.
+// Inspect retrieves the daemon's most recent world snapshot, mode information, and rule log.
 func (c *Client) Inspect(ctx context.Context) (InspectorState, error) {
+	return c.InspectorGet(ctx)
+}
+
+// InspectorGet retrieves the inspector payload via the control socket.
+func (c *Client) InspectorGet(ctx context.Context) (InspectorState, error) {
 	var snapshot InspectorState
-	if err := c.do(ctx, control.Request{Action: control.ActionInspect}, &snapshot); err != nil {
+	if err := c.do(ctx, control.Request{Action: control.ActionInspectorGet}, &snapshot); err != nil {
 		return InspectorState{}, err
 	}
 	return snapshot, nil
