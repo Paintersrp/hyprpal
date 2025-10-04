@@ -101,7 +101,7 @@ func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 			Debounce: time.Second,
 		}},
 	}
-	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
 	key := mode.Name + ":" + mode.Rules[0].Name
 	eng.debounce[key] = time.Now()
 
@@ -133,7 +133,7 @@ func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: actPlan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("first reconcileAndApply returned error: %v", err)
@@ -172,7 +172,7 @@ func TestReconcileUsesBatchDispatcherWhenAvailable(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)
@@ -203,7 +203,7 @@ func TestRuleExecutionTrackingAllowsNormalFlow(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)
@@ -231,7 +231,7 @@ func TestRuleExecutionTrackingBelowThreshold(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
 	key := mode.Name + ":" + rule.Name
 
 	for i := 0; i < ruleBurstThreshold; i++ {
@@ -264,7 +264,7 @@ func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
 	key := mode.Name + ":" + rule.Name
 
 	for i := 0; i < ruleBurstThreshold; i++ {
@@ -321,7 +321,7 @@ func TestTraceLoggingDryRunSequence(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelTrace, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, true)
+	eng := New(hypr, logger, []rules.Mode{mode}, true, false)
 	eng.mu.Lock()
 	eng.lastWorld = baseWorld
 	eng.mu.Unlock()
@@ -388,6 +388,76 @@ func TestTraceLoggingDryRunSequence(t *testing.T) {
 		if payloadValue(t, dispatchPayload, "status").(string) != "dry-run" {
 			t.Fatalf("expected dry-run status, got %v", dispatchPayload)
 		}
+	}
+}
+
+func TestRedactTitlesToggle(t *testing.T) {
+	const secretTitle = "Secret Document"
+	hypr := &fakeHyprctl{
+		clients: []state.Client{{
+			Address:     "addr-1",
+			Class:       "App",
+			Title:       secretTitle,
+			WorkspaceID: 1,
+			MonitorName: "HDMI-A-1",
+		}},
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:addr-1")
+	rule := rules.Rule{
+		Name: "title match",
+		When: func(ctx rules.EvalContext) bool {
+			for _, c := range ctx.World.Clients {
+				if c.Title == secretTitle {
+					return true
+				}
+			}
+			return false
+		},
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch before redaction, got %d", len(hypr.dispatched))
+	}
+	world := eng.LastWorld()
+	if world == nil || len(world.Clients) != 1 {
+		t.Fatalf("expected last world with one client, got %+v", world)
+	}
+	if world.Clients[0].Title != secretTitle {
+		t.Fatalf("expected stored title %q before redaction, got %q", secretTitle, world.Clients[0].Title)
+	}
+
+	key := mode.Name + ":" + rule.Name
+	clearCooldown(t, eng, key)
+	hypr.dispatched = nil
+
+	eng.SetRedactTitles(true)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply with redaction returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch after redaction, got %d", len(hypr.dispatched))
+	}
+	world = eng.LastWorld()
+	if world == nil || len(world.Clients) != 1 {
+		t.Fatalf("expected last world with one client after redaction, got %+v", world)
+	}
+	if world.Clients[0].Title != redactedTitle {
+		t.Fatalf("expected redacted title %q, got %q", redactedTitle, world.Clients[0].Title)
+	}
+	if hypr.clients[0].Title != secretTitle {
+		t.Fatalf("expected source client title to remain %q, got %q", secretTitle, hypr.clients[0].Title)
 	}
 }
 

@@ -77,7 +77,7 @@ func main() {
 		exitErr(fmt.Errorf("configure dispatch strategy: %w", err))
 	}
 	logger.Infof("using %s dispatch strategy", strategy)
-	eng := engine.New(hypr, logger, modes, *dryRun)
+	eng := engine.New(hypr, logger, modes, *dryRun, cfg.RedactTitles)
 	if *startMode != "" {
 		if err := eng.SetMode(*startMode); err != nil {
 			logger.Warnf("failed to set mode %s: %v", *startMode, err)
@@ -98,6 +98,7 @@ func main() {
 			return fmt.Errorf("compile rules: %w", err)
 		}
 		eng.ReloadModes(modes)
+		eng.SetRedactTitles(cfg.RedactTitles)
 		if err := eng.Reconcile(ctx); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
