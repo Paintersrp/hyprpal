@@ -1,0 +1,43 @@
+# Example Hyprpal preset for a dedicated gaming workspace.
+managedWorkspaces:
+  - 5
+  - 6
+redactTitles: true
+modes:
+  - name: Gaming
+    rules:
+      - name: Force fullscreen on primary monitor
+        when:
+          all:
+            - mode: Gaming
+            - monitor.name: DP-1
+            - workspace.id: 5
+        allowUnmanaged: true
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: active
+      - name: Fullscreen popular launchers
+        when:
+          mode: Gaming
+        allowUnmanaged: true
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: match
+              match:
+                anyClass: [steam, heroic, lutris]
+      - name: Dock voice chat overlay
+        when:
+          all:
+            - mode: Gaming
+            - workspace.id: 6
+            - apps.present: [vesktop]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 6
+              side: left
+              widthPercent: 20
+              match:
+                class: vesktop

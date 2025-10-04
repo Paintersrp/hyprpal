@@ -1,0 +1,56 @@
+# Example Hyprpal preset for an ultrawide workstation with focused zones.
+managedWorkspaces:
+  - 1
+  - 10
+  - 11
+modes:
+  - name: Ultrawide
+    rules:
+      - name: Anchor primary app center stage
+        when:
+          all:
+            - mode: Ultrawide
+            - workspace.id: 10
+            - monitor.name: DP-2
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: active
+      - name: Stage reference docs on right wing
+        when:
+          all:
+            - mode: Ultrawide
+            - workspace.id: 10
+            - apps.present: [Firefox, qutebrowser]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 10
+              side: right
+              widthPercent: 30
+              match:
+                anyClass: [Firefox, qutebrowser]
+      - name: Stage messaging stack on left wing
+        when:
+          all:
+            - mode: Ultrawide
+            - workspace.id: 10
+            - apps.present: [Slack, TelegramDesktop]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 10
+              side: left
+              widthPercent: 25
+              match:
+                anyClass: [Slack, TelegramDesktop]
+      - name: Make cinematic workspace fullscreen
+        when:
+          all:
+            - mode: Ultrawide
+            - workspace.id: 11
+            - monitor.name: HDMI-A-1
+        actions:
+          - type: layout.fullscreen
+            params:
+              target: active
