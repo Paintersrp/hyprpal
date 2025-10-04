@@ -76,3 +76,27 @@ func TestValidateProfileDefinition(t *testing.T) {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
+
+func TestConfigUnmarshalToleranceAliases(t *testing.T) {
+	t.Run("tolerancePx", func(t *testing.T) {
+		data := []byte(`tolerancePx: 3.5`)
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.TolerancePx != 3.5 {
+			t.Fatalf("expected TolerancePx to be 3.5, got %v", cfg.TolerancePx)
+		}
+	})
+
+	t.Run("placementTolerancePx", func(t *testing.T) {
+		data := []byte(`placementTolerancePx: 1.25`)
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.TolerancePx != 1.25 {
+			t.Fatalf("expected legacy placementTolerancePx to populate TolerancePx, got %v", cfg.TolerancePx)
+		}
+	})
+}

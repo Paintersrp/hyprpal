@@ -9,12 +9,47 @@ import (
 
 // Config is the top-level configuration document.
 type Config struct {
-	ManagedWorkspaces    []int           `yaml:"managedWorkspaces"`
-	Modes                []ModeConfig    `yaml:"modes"`
-	RedactTitles         bool            `yaml:"redactTitles"`
-	Gaps                 Gaps            `yaml:"gaps"`
-	PlacementTolerancePx float64         `yaml:"placementTolerancePx"`
-	Profiles             MatcherProfiles `yaml:"profiles"`
+	ManagedWorkspaces []int           `yaml:"managedWorkspaces"`
+	Modes             []ModeConfig    `yaml:"modes"`
+	RedactTitles      bool            `yaml:"redactTitles"`
+	Gaps              Gaps            `yaml:"gaps"`
+	TolerancePx       float64         `yaml:"tolerancePx"`
+	Profiles          MatcherProfiles `yaml:"profiles"`
+}
+
+// UnmarshalYAML handles deprecated fields while decoding configuration files.
+func (c *Config) UnmarshalYAML(value *yaml.Node) error {
+	type rawConfig struct {
+		ManagedWorkspaces []int           `yaml:"managedWorkspaces"`
+		Modes             []ModeConfig    `yaml:"modes"`
+		RedactTitles      bool            `yaml:"redactTitles"`
+		Gaps              Gaps            `yaml:"gaps"`
+		TolerancePx       *float64        `yaml:"tolerancePx"`
+		LegacyTolerancePx *float64        `yaml:"placementTolerancePx"`
+		Profiles          MatcherProfiles `yaml:"profiles"`
+	}
+
+	var raw rawConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	c.ManagedWorkspaces = raw.ManagedWorkspaces
+	c.Modes = raw.Modes
+	c.RedactTitles = raw.RedactTitles
+	c.Gaps = raw.Gaps
+	c.Profiles = raw.Profiles
+
+	switch {
+	case raw.TolerancePx != nil:
+		c.TolerancePx = *raw.TolerancePx
+	case raw.LegacyTolerancePx != nil:
+		c.TolerancePx = *raw.LegacyTolerancePx
+	default:
+		c.TolerancePx = 0
+	}
+
+	return nil
 }
 
 // MatcherProfiles defines reusable client matcher templates by name.
@@ -117,8 +152,8 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	if c.PlacementTolerancePx == 0 {
-		c.PlacementTolerancePx = 2.0
+	if c.TolerancePx == 0 {
+		c.TolerancePx = 2.0
 	}
 }
 
@@ -133,8 +168,8 @@ func (c *Config) Validate() error {
 	if c.Gaps.Outer < 0 {
 		return fmt.Errorf("gaps.outer cannot be negative")
 	}
-	if c.PlacementTolerancePx < 0 {
-		return fmt.Errorf("placementTolerancePx cannot be negative")
+	if c.TolerancePx < 0 {
+		return fmt.Errorf("tolerancePx cannot be negative")
 	}
 	for name, profile := range c.Profiles {
 		if err := profile.Validate(); err != nil {

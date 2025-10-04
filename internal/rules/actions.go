@@ -13,13 +13,13 @@ import (
 
 // ActionContext is passed to action planners.
 type ActionContext struct {
-	World              *state.World
-	Logger             *util.Logger
-	RuleName           string
-	ManagedWorkspaces  map[int]struct{}
-	AllowUnmanaged     bool
-	Gaps               layout.Gaps
-	PlacementTolerance float64
+	World             *state.World
+	Logger            *util.Logger
+	RuleName          string
+	ManagedWorkspaces map[int]struct{}
+	AllowUnmanaged    bool
+	Gaps              layout.Gaps
+	TolerancePx       float64
 }
 
 func (ctx ActionContext) workspaceAllowed(id int) bool {
@@ -252,7 +252,7 @@ func (a *SidecarDockAction) Plan(ctx ActionContext) (layout.Plan, error) {
 		return layout.Plan{}, err
 	}
 	_, dock := layout.SplitSidecar(monitor.Rectangle, a.Side, a.WidthPercent, ctx.Gaps)
-	if layout.ApproximatelyEqual(target.Geometry, dock, ctx.PlacementTolerance) {
+	if layout.ApproximatelyEqual(target.Geometry, dock, ctx.TolerancePx) {
 		if ctx.Logger != nil {
 			ctx.Logger.Infof("rule %s skipped (idempotent)", ctx.RuleName)
 		}

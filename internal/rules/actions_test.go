@@ -59,7 +59,7 @@ func TestSidecarDockPlanIdempotentLogs(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	logger := util.NewLoggerWithWriter(util.LevelInfo, buf)
-	ctx := ActionContext{World: world, Logger: logger, RuleName: "sidecar", PlacementTolerance: 2, Gaps: layout.Gaps{}}
+	ctx := ActionContext{World: world, Logger: logger, RuleName: "sidecar", TolerancePx: 2, Gaps: layout.Gaps{}}
 
 	plan, err := action.Plan(ctx)
 	if err != nil {
@@ -109,12 +109,12 @@ func TestSidecarDockPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 	buf := &bytes.Buffer{}
 	logger := util.NewLoggerWithWriter(util.LevelInfo, buf)
 	ctx := ActionContext{
-		World:              world,
-		Logger:             logger,
-		RuleName:           "sidecar",
-		ManagedWorkspaces:  map[int]struct{}{1: {}},
-		PlacementTolerance: 2,
-		Gaps:               layout.Gaps{},
+		World:             world,
+		Logger:            logger,
+		RuleName:          "sidecar",
+		ManagedWorkspaces: map[int]struct{}{1: {}},
+		TolerancePx:       2,
+		Gaps:              layout.Gaps{},
 	}
 
 	plan, err := action.Plan(ctx)
@@ -146,12 +146,12 @@ func TestFullscreenPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 	buf := &bytes.Buffer{}
 	logger := util.NewLoggerWithWriter(util.LevelInfo, buf)
 	ctx := ActionContext{
-		World:              world,
-		Logger:             logger,
-		RuleName:           "fullscreen",
-		ManagedWorkspaces:  map[int]struct{}{1: {}},
-		PlacementTolerance: 2,
-		Gaps:               layout.Gaps{},
+		World:             world,
+		Logger:            logger,
+		RuleName:          "fullscreen",
+		ManagedWorkspaces: map[int]struct{}{1: {}},
+		TolerancePx:       2,
+		Gaps:              layout.Gaps{},
 	}
 
 	plan, err := action.Plan(ctx)
@@ -181,13 +181,13 @@ func TestFullscreenPlanAllowsWhenOptedIn(t *testing.T) {
 	buf := &bytes.Buffer{}
 	logger := util.NewLoggerWithWriter(util.LevelInfo, buf)
 	ctx := ActionContext{
-		World:              world,
-		Logger:             logger,
-		RuleName:           "fullscreen",
-		ManagedWorkspaces:  map[int]struct{}{1: {}},
-		AllowUnmanaged:     true,
-		PlacementTolerance: 2,
-		Gaps:               layout.Gaps{},
+		World:             world,
+		Logger:            logger,
+		RuleName:          "fullscreen",
+		ManagedWorkspaces: map[int]struct{}{1: {}},
+		AllowUnmanaged:    true,
+		TolerancePx:       2,
+		Gaps:              layout.Gaps{},
 	}
 
 	plan, err := action.Plan(ctx)
