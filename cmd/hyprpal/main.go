@@ -27,7 +27,7 @@ func main() {
 
 	cfgPath := flag.String("config", defaultConfig, "path to YAML config")
 	dryRun := flag.Bool("dry-run", false, "do not dispatch commands")
-	logLevel := flag.String("log-level", "info", "log level (debug|info|warn|error)")
+	logLevel := flag.String("log-level", "info", "log level (trace|debug|info|warn|error)")
 	startMode := flag.String("mode", "", "initial mode to activate")
 	dispatchStrategy := flag.String("dispatch", string(ipc.DispatchStrategySocket), "dispatch strategy (socket|hyprctl)")
 	flag.Parse()
