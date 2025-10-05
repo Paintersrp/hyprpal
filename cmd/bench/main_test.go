@@ -190,6 +190,36 @@ func TestLoadFixtureJSONFallbacksToBase(t *testing.T) {
 	}
 }
 
+func TestLoadFixtureJSONFallsBackToBaseMode(t *testing.T) {
+	base := defaultFixture()
+	base.Mode = "Coding"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.json")
+	payload := `{
+  "name": "custom",
+  "events": [
+    {"kind": "activewindow", "payload": "0xabc"}
+  ]
+}`
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	fixture, err := loadFixture(path, base)
+	if err != nil {
+		t.Fatalf("loadFixture returned error: %v", err)
+	}
+	if fixture.Mode != base.Mode {
+		t.Fatalf("expected mode fallback to %q, got %q", base.Mode, fixture.Mode)
+	}
+	if fixture.Name != "custom" {
+		t.Fatalf("expected name custom, got %q", fixture.Name)
+	}
+	if len(fixture.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(fixture.Events))
+	}
+}
+
 func TestLoadFixtureJSONParsesDelay(t *testing.T) {
 	base := defaultFixture()
 	dir := t.TempDir()
