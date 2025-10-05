@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hyprpal/hyprpal/internal/ipc"
 	"github.com/hyprpal/hyprpal/internal/layout"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
@@ -15,12 +16,17 @@ import (
 )
 
 type fakeHyprctl struct {
-	clients         []state.Client
-	workspaces      []state.Workspace
-	monitors        []state.Monitor
-	activeWorkspace int
-	activeClient    string
-	dispatched      [][]string
+	clients              []state.Client
+	workspaces           []state.Workspace
+	monitors             []state.Monitor
+	activeWorkspace      int
+	activeClient         string
+	dispatched           [][]string
+	listClientsCalls     int
+	listWorkspacesCalls  int
+	listMonitorsCalls    int
+	activeWorkspaceCalls int
+	activeClientCalls    int
 }
 
 type batchHyprctl struct {
@@ -38,22 +44,27 @@ func (s stubAction) Plan(rules.ActionContext) (layout.Plan, error) {
 }
 
 func (f *fakeHyprctl) ListClients(context.Context) ([]state.Client, error) {
+	f.listClientsCalls++
 	return append([]state.Client(nil), f.clients...), nil
 }
 
 func (f *fakeHyprctl) ListWorkspaces(context.Context) ([]state.Workspace, error) {
+	f.listWorkspacesCalls++
 	return append([]state.Workspace(nil), f.workspaces...), nil
 }
 
 func (f *fakeHyprctl) ListMonitors(context.Context) ([]state.Monitor, error) {
+	f.listMonitorsCalls++
 	return append([]state.Monitor(nil), f.monitors...), nil
 }
 
 func (f *fakeHyprctl) ActiveWorkspaceID(context.Context) (int, error) {
+	f.activeWorkspaceCalls++
 	return f.activeWorkspace, nil
 }
 
 func (f *fakeHyprctl) ActiveClientAddress(context.Context) (string, error) {
+	f.activeClientCalls++
 	return f.activeClient, nil
 }
 
@@ -705,6 +716,175 @@ func TestCombineMonitorInsetsFallsBackToHyprReserved(t *testing.T) {
 	expected := layout.Insets{Left: 10, Right: 20}
 	if got := combined["DP-1"]; got != expected {
 		t.Fatalf("expected hypr reserved inset to propagate, got %+v", got)
+	}
+}
+
+func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
+	ctx := context.Background()
+	hypr := &fakeHyprctl{
+		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+	}
+	plan := layout.Plan{}
+	plan.Add("focuswindow", "address:0xabc")
+	expectedTitle := "New Window"
+	rule := rules.Rule{
+		Name: "match-title",
+		When: func(ctx rules.EvalContext) bool {
+			for _, c := range ctx.World.Clients {
+				if c.Title == expectedTitle {
+					return true
+				}
+			}
+			return false
+		},
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	logger := util.NewLogger(util.LevelInfo)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+	key := mode.Name + ":" + rule.Name
+
+	if err := eng.reconcileAndApply(ctx); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 0 {
+		t.Fatalf("expected no initial dispatch, got %d", len(hypr.dispatched))
+	}
+
+	clientsCalls := hypr.listClientsCalls
+	workspacesCalls := hypr.listWorkspacesCalls
+	monitorsCalls := hypr.listMonitorsCalls
+	activeWorkspaceCalls := hypr.activeWorkspaceCalls
+	activeClientCalls := hypr.activeClientCalls
+
+	event := ipc.Event{Kind: "openwindow", Payload: "0xabc,1,Terminal,New Window"}
+	if err := eng.applyEvent(ctx, event); err != nil {
+		t.Fatalf("applyEvent returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch after openwindow, got %d", len(hypr.dispatched))
+	}
+	if hypr.listClientsCalls != clientsCalls || hypr.listWorkspacesCalls != workspacesCalls ||
+		hypr.listMonitorsCalls != monitorsCalls || hypr.activeWorkspaceCalls != activeWorkspaceCalls ||
+		hypr.activeClientCalls != activeClientCalls {
+		t.Fatalf("unexpected datasource calls after openwindow: %+v", map[string]int{
+			"clients":         hypr.listClientsCalls - clientsCalls,
+			"workspaces":      hypr.listWorkspacesCalls - workspacesCalls,
+			"monitors":        hypr.listMonitorsCalls - monitorsCalls,
+			"activeWorkspace": hypr.activeWorkspaceCalls - activeWorkspaceCalls,
+			"activeClient":    hypr.activeClientCalls - activeClientCalls,
+		})
+	}
+	world := eng.LastWorld()
+	if world == nil || len(world.Clients) != 1 {
+		t.Fatalf("expected cached world with one client, got %+v", world)
+	}
+	if got := world.Clients[0].Title; got != "New Window" {
+		t.Fatalf("expected cached title %q, got %q", "New Window", got)
+	}
+	if got := world.Workspaces[0].Windows; got != 1 {
+		t.Fatalf("expected workspace window count 1, got %d", got)
+	}
+
+	hypr.dispatched = nil
+	clearCooldown(t, eng, key)
+	expectedTitle = "Secret Window"
+	eng.SetRedactTitles(true)
+	clearCooldown(t, eng, key)
+	event = ipc.Event{Kind: "openwindow", Payload: "0xdef,1,Terminal,Secret Window"}
+	if err := eng.applyEvent(ctx, event); err != nil {
+		t.Fatalf("applyEvent with redaction returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch after redacted openwindow, got %d", len(hypr.dispatched))
+	}
+	if hypr.listClientsCalls != clientsCalls || hypr.listWorkspacesCalls != workspacesCalls ||
+		hypr.listMonitorsCalls != monitorsCalls || hypr.activeWorkspaceCalls != activeWorkspaceCalls ||
+		hypr.activeClientCalls != activeClientCalls {
+		t.Fatalf("unexpected datasource calls after second openwindow")
+	}
+	world = eng.LastWorld()
+	if world == nil || len(world.Clients) != 2 {
+		t.Fatalf("expected cached world with two clients, got %+v", world)
+	}
+	for i, c := range world.Clients {
+		if c.Title != redactedTitle {
+			t.Fatalf("expected client %d title to be redacted, got %q", i, c.Title)
+		}
+	}
+	if got := world.Workspaces[0].Windows; got != 2 {
+		t.Fatalf("expected workspace window count 2, got %d", got)
+	}
+}
+
+func TestApplyEventCloseWindowEvaluatesIncrementally(t *testing.T) {
+	ctx := context.Background()
+	hypr := &fakeHyprctl{
+		clients: []state.Client{{
+			Address:     "0xabc",
+			Class:       "Terminal",
+			Title:       "Existing",
+			WorkspaceID: 1,
+			MonitorName: "HDMI-A-1",
+		}},
+		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1", Windows: 1}},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+		activeClient:    "0xabc",
+	}
+	plan := layout.Plan{}
+	plan.Add("workspace", "1")
+	rule := rules.Rule{
+		Name: "no-clients",
+		When: func(ctx rules.EvalContext) bool {
+			return len(ctx.World.Clients) == 0
+		},
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	logger := util.NewLogger(util.LevelInfo)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(ctx); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 0 {
+		t.Fatalf("expected no dispatch before closewindow, got %d", len(hypr.dispatched))
+	}
+
+	clientsCalls := hypr.listClientsCalls
+	workspacesCalls := hypr.listWorkspacesCalls
+	monitorsCalls := hypr.listMonitorsCalls
+	activeWorkspaceCalls := hypr.activeWorkspaceCalls
+	activeClientCalls := hypr.activeClientCalls
+
+	hypr.dispatched = nil
+	event := ipc.Event{Kind: "closewindow", Payload: "0xabc"}
+	if err := eng.applyEvent(ctx, event); err != nil {
+		t.Fatalf("applyEvent returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch after closewindow, got %d", len(hypr.dispatched))
+	}
+	if hypr.listClientsCalls != clientsCalls || hypr.listWorkspacesCalls != workspacesCalls ||
+		hypr.listMonitorsCalls != monitorsCalls || hypr.activeWorkspaceCalls != activeWorkspaceCalls ||
+		hypr.activeClientCalls != activeClientCalls {
+		t.Fatalf("unexpected datasource calls after closewindow")
+	}
+	world := eng.LastWorld()
+	if world == nil {
+		t.Fatalf("expected cached world after closewindow")
+	}
+	if len(world.Clients) != 0 {
+		t.Fatalf("expected no clients cached, got %d", len(world.Clients))
+	}
+	if world.ActiveClientAddress != "" {
+		t.Fatalf("expected active client cleared, got %q", world.ActiveClientAddress)
+	}
+	if got := world.Workspaces[0].Windows; got != 0 {
+		t.Fatalf("expected workspace window count 0, got %d", got)
 	}
 }
 
