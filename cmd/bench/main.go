@@ -506,6 +506,12 @@ func loadFixture(path string, base benchFixture) (benchFixture, error) {
 				Delay: delay,
 			})
 		}
+		if len(fixture.Events) == 0 {
+			if len(base.Events) == 0 {
+				return benchFixture{}, errors.New("fixture contains no events")
+			}
+			fixture.Events = append([]benchEvent(nil), base.Events...)
+		}
 		return fixture, nil
 	}
 	base.Name = fallback(base.Name, filepath.Base(path))

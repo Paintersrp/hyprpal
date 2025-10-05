@@ -2,6 +2,8 @@ package main
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -156,5 +158,63 @@ movewindow>>0xabc,3
 	}
 	if events[2].Event.Kind != "movewindow" || events[2].Event.Payload != "0xabc,3" {
 		t.Fatalf("unexpected third event: %+v", events[2])
+	}
+}
+
+func TestLoadFixtureJSONFallbacksToBase(t *testing.T) {
+	base := defaultFixture()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.json")
+	payload := `{
+  "mode": "Coding"
+}`
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	fixture, err := loadFixture(path, base)
+	if err != nil {
+		t.Fatalf("loadFixture returned error: %v", err)
+	}
+	if fixture.Mode != "Coding" {
+		t.Fatalf("expected mode Coding, got %q", fixture.Mode)
+	}
+	if len(fixture.Events) != len(base.Events) {
+		t.Fatalf("expected %d events, got %d", len(base.Events), len(fixture.Events))
+	}
+	if len(fixture.Clients) != len(base.Clients) {
+		t.Fatalf("expected %d clients, got %d", len(base.Clients), len(fixture.Clients))
+	}
+	if fixture.ActiveWorkspace != base.ActiveWorkspace {
+		t.Fatalf("expected active workspace %d, got %d", base.ActiveWorkspace, fixture.ActiveWorkspace)
+	}
+}
+
+func TestLoadFixtureJSONParsesDelay(t *testing.T) {
+	base := defaultFixture()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.json")
+	payload := `{
+  "events": [
+    {"kind": " activewindow ", "payload": "0xabc", "delay": "15ms"}
+  ]
+}`
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	fixture, err := loadFixture(path, base)
+	if err != nil {
+		t.Fatalf("loadFixture returned error: %v", err)
+	}
+	if len(fixture.Events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(fixture.Events))
+	}
+	ev := fixture.Events[0]
+	if ev.Event.Kind != "activewindow" {
+		t.Fatalf("expected kind activewindow, got %q", ev.Event.Kind)
+	}
+	if ev.Delay != 15*time.Millisecond {
+		t.Fatalf("expected delay 15ms, got %s", ev.Delay)
 	}
 }
