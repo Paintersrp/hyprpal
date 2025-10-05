@@ -141,6 +141,7 @@ type RuleConfig struct {
 	Actions         []ActionConfig  `yaml:"actions"`
 	DebounceMs      int             `yaml:"debounceMs"`
 	MutateUnmanaged bool            `yaml:"mutateUnmanaged"`
+	Priority        int             `yaml:"priority"`
 }
 
 // UnmarshalYAML keeps backwards compatibility with the deprecated allowUnmanaged flag.
@@ -152,6 +153,7 @@ func (r *RuleConfig) UnmarshalYAML(value *yaml.Node) error {
 		DebounceMs      int             `yaml:"debounceMs"`
 		MutateUnmanaged *bool           `yaml:"mutateUnmanaged"`
 		AllowUnmanaged  *bool           `yaml:"allowUnmanaged"`
+		Priority        int             `yaml:"priority"`
 	}
 
 	var raw rawRule
@@ -163,6 +165,7 @@ func (r *RuleConfig) UnmarshalYAML(value *yaml.Node) error {
 	r.When = raw.When
 	r.Actions = raw.Actions
 	r.DebounceMs = raw.DebounceMs
+	r.Priority = raw.Priority
 
 	switch {
 	case raw.MutateUnmanaged != nil:
@@ -478,6 +481,9 @@ func (c *Config) Lint() []LintError {
 			}
 			if len(rule.Actions) == 0 {
 				errs = append(errs, newLintError(rulePath+".actions", "must define at least one action"))
+			}
+			if rule.Priority < 0 {
+				errs = append(errs, newLintError(rulePath+".priority", "cannot be negative"))
 			}
 			errs = append(errs, c.lintMatcherReferences(i, j, rule)...)
 		}

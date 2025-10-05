@@ -355,3 +355,85 @@ modes:
 		}
 	})
 }
+
+func TestRuleConfigUnmarshalPriority(t *testing.T) {
+	t.Run("defaultsToZero", func(t *testing.T) {
+		data := []byte(`
+modes:
+  - name: Test
+    rules:
+      - name: Example
+        when:
+          mode: Test
+        actions:
+          - type: layout.fullscreen
+`)
+
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Modes[0].Rules[0].Priority != 0 {
+			t.Fatalf("expected priority to default to 0, got %d", cfg.Modes[0].Rules[0].Priority)
+		}
+	})
+
+	t.Run("explicitValue", func(t *testing.T) {
+		data := []byte(`
+modes:
+  - name: Test
+    rules:
+      - name: Example
+        when:
+          mode: Test
+        priority: 7
+        actions:
+          - type: layout.fullscreen
+`)
+
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Modes[0].Rules[0].Priority != 7 {
+			t.Fatalf("expected priority to be 7, got %d", cfg.Modes[0].Rules[0].Priority)
+		}
+	})
+}
+
+func TestLintRulePriority(t *testing.T) {
+	cfg := Config{
+		Modes: []ModeConfig{{
+			Name: "Test",
+			Rules: []RuleConfig{{
+				Name:     "Example",
+				When:     PredicateConfig{Mode: "Test"},
+				Priority: -1,
+				Actions: []ActionConfig{{
+					Type: "layout.fullscreen",
+				}},
+			}},
+		}},
+	}
+
+	errs := cfg.Lint()
+	if len(errs) == 0 {
+		t.Fatalf("expected lint error for negative priority")
+	}
+	found := false
+	for _, err := range errs {
+		if err.Path == "modes[0].rules[0].priority" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lint error for negative priority path, got %#v", errs)
+	}
+
+	cfg.Modes[0].Rules[0].Priority = 5
+	errs = cfg.Lint()
+	if len(errs) != 0 {
+		t.Fatalf("expected no lint errors for positive priority, got %#v", errs)
+	}
+}
