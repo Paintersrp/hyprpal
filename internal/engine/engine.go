@@ -27,13 +27,14 @@ type Engine struct {
 	hyprctl hyprctlClient
 	logger  *util.Logger
 
-	modes              map[string]rules.Mode
-	modeOrder          []string
-	activeMode         string
-	dryRun             bool
-	redactTitles       bool
-	gaps               layout.Gaps
-	placementTolerance float64
+	modes                    map[string]rules.Mode
+	modeOrder                []string
+	activeMode               string
+	dryRun                   bool
+	redactTitles             bool
+	gaps                     layout.Gaps
+	placementTolerance       float64
+	monitorReservedOverrides map[string]layout.InsetsOverride
 
 	mu          sync.Mutex
 	debounce    map[string]time.Time
@@ -50,6 +51,20 @@ const (
 	ruleBurstCooldown     = 5 * time.Second
 	ruleCheckHistoryLimit = 256
 )
+
+func cloneInsetsOverrides(src map[string]layout.InsetsOverride) map[string]layout.InsetsOverride {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]layout.InsetsOverride, len(src))
+	for name, override := range src {
+		dst[name] = override.Clone()
+	}
+	if len(dst) == 0 {
+		return nil
+	}
+	return dst
+}
 
 type plannedRule struct {
 	Key  string
@@ -83,7 +98,7 @@ type ruleCheckHistory struct {
 }
 
 // New creates a new engine instance.
-func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool, gaps layout.Gaps, placementTolerance float64) *Engine {
+func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool, gaps layout.Gaps, placementTolerance float64, reservedOverrides map[string]layout.InsetsOverride) *Engine {
 	modeMap := make(map[string]rules.Mode)
 	order := make([]string, 0, len(modes))
 	for _, m := range modes {
@@ -95,20 +110,21 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		active = order[0]
 	}
 	return &Engine{
-		hyprctl:            hyprctl,
-		logger:             logger,
-		modes:              modeMap,
-		modeOrder:          order,
-		activeMode:         active,
-		dryRun:             dryRun,
-		redactTitles:       redactTitles,
-		gaps:               gaps,
-		placementTolerance: placementTolerance,
-		debounce:           make(map[string]time.Time),
-		cooldown:           make(map[string]time.Time),
-		execHistory:        make(map[string][]time.Time),
-		evalLog:            newEvaluationLog(0),
-		ruleChecks:         newRuleCheckHistory(0),
+		hyprctl:                  hyprctl,
+		logger:                   logger,
+		modes:                    modeMap,
+		modeOrder:                order,
+		activeMode:               active,
+		dryRun:                   dryRun,
+		redactTitles:             redactTitles,
+		gaps:                     gaps,
+		placementTolerance:       placementTolerance,
+		monitorReservedOverrides: cloneInsetsOverrides(reservedOverrides),
+		debounce:                 make(map[string]time.Time),
+		cooldown:                 make(map[string]time.Time),
+		execHistory:              make(map[string][]time.Time),
+		evalLog:                  newEvaluationLog(0),
+		ruleChecks:               newRuleCheckHistory(0),
 	}
 }
 
@@ -174,11 +190,12 @@ func (e *Engine) SetRedactTitles(enabled bool) {
 	e.mu.Unlock()
 }
 
-// SetLayoutParameters updates the gap and tolerance configuration.
-func (e *Engine) SetLayoutParameters(gaps layout.Gaps, tolerance float64) {
+// SetLayoutParameters updates the gap, tolerance, and reserved monitor overrides.
+func (e *Engine) SetLayoutParameters(gaps layout.Gaps, tolerance float64, reserved map[string]layout.InsetsOverride) {
 	e.mu.Lock()
 	e.gaps = gaps
 	e.placementTolerance = tolerance
+	e.monitorReservedOverrides = cloneInsetsOverrides(reserved)
 	e.mu.Unlock()
 }
 
@@ -375,6 +392,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 	mode, ok := e.modes[activeMode]
 	gaps := e.gaps
 	tolerance := e.placementTolerance
+	reserved := cloneInsetsOverrides(e.monitorReservedOverrides)
 	e.mu.Unlock()
 	if !ok {
 		if log {
@@ -431,13 +449,14 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 		rulePlan := layout.Plan{}
 		for _, action := range rule.Actions {
 			p, err := action.Plan(rules.ActionContext{
-				World:              world,
-				Logger:             e.logger,
-				RuleName:           rule.Name,
-				ManagedWorkspaces:  rule.ManagedWorkspaces,
-				AllowUnmanaged:     rule.AllowUnmanaged,
-				Gaps:               gaps,
-				PlacementTolerance: tolerance,
+				World:                    world,
+				Logger:                   e.logger,
+				RuleName:                 rule.Name,
+				ManagedWorkspaces:        rule.ManagedWorkspaces,
+				AllowUnmanaged:           rule.AllowUnmanaged,
+				Gaps:                     gaps,
+				MonitorReservedOverrides: reserved,
+				PlacementTolerance:       tolerance,
 			})
 			if err != nil {
 				e.logger.Errorf("rule %s action error: %v", rule.Name, err)

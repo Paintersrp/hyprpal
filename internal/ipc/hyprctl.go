@@ -133,12 +133,13 @@ func (c *Client) ListMonitors(ctx context.Context) ([]state.Monitor, error) {
 		return nil, err
 	}
 	var raw []struct {
-		ID              int     `json:"id"`
-		Name            string  `json:"name"`
-		X               float64 `json:"x"`
-		Y               float64 `json:"y"`
-		Width           float64 `json:"width"`
-		Height          float64 `json:"height"`
+		ID              int       `json:"id"`
+		Name            string    `json:"name"`
+		X               float64   `json:"x"`
+		Y               float64   `json:"y"`
+		Width           float64   `json:"width"`
+		Height          float64   `json:"height"`
+		Reserved        []float64 `json:"reserved"`
 		ActiveWorkspace struct {
 			ID int `json:"id"`
 		} `json:"activeWorkspace"`
@@ -151,10 +152,18 @@ func (c *Client) ListMonitors(ctx context.Context) ([]state.Monitor, error) {
 	}
 	monitors := make([]state.Monitor, 0, len(raw))
 	for _, m := range raw {
+		reserved := layout.Insets{}
+		if len(m.Reserved) == 4 {
+			reserved.Top = m.Reserved[0]
+			reserved.Bottom = m.Reserved[1]
+			reserved.Left = m.Reserved[2]
+			reserved.Right = m.Reserved[3]
+		}
 		monitors = append(monitors, state.Monitor{
 			ID:                 m.ID,
 			Name:               m.Name,
 			Rectangle:          layout.Rect{X: m.X, Y: m.Y, Width: m.Width, Height: m.Height},
+			Reserved:           reserved,
 			ActiveWorkspaceID:  m.ActiveWorkspace.ID,
 			FocusedWorkspaceID: m.FocusedWorkspace.ID,
 		})

@@ -19,8 +19,79 @@ type Gaps struct {
 	Outer float64
 }
 
+// Insets describes reserved space around a rectangle.
+type Insets struct {
+	Top    float64
+	Bottom float64
+	Left   float64
+	Right  float64
+}
+
+// InsetsOverride allows overriding individual inset values.
+type InsetsOverride struct {
+	Top    *float64
+	Bottom *float64
+	Left   *float64
+	Right  *float64
+}
+
+// Apply returns a copy of base with any override values applied.
+func (o InsetsOverride) Apply(base Insets) Insets {
+	out := base
+	if o.Top != nil {
+		out.Top = *o.Top
+	}
+	if o.Bottom != nil {
+		out.Bottom = *o.Bottom
+	}
+	if o.Left != nil {
+		out.Left = *o.Left
+	}
+	if o.Right != nil {
+		out.Right = *o.Right
+	}
+	return out
+}
+
+// Clone returns a deep copy of the override to avoid sharing pointers.
+func (o InsetsOverride) Clone() InsetsOverride {
+	clone := InsetsOverride{}
+	if o.Top != nil {
+		v := *o.Top
+		clone.Top = &v
+	}
+	if o.Bottom != nil {
+		v := *o.Bottom
+		clone.Bottom = &v
+	}
+	if o.Left != nil {
+		v := *o.Left
+		clone.Left = &v
+	}
+	if o.Right != nil {
+		v := *o.Right
+		clone.Right = &v
+	}
+	return clone
+}
+
+func applyInsets(rect Rect, insets Insets) Rect {
+	out := rect
+	out.X += insets.Left
+	out.Y += insets.Top
+	out.Width -= insets.Left + insets.Right
+	out.Height -= insets.Top + insets.Bottom
+	if out.Width < 0 {
+		out.Width = 0
+	}
+	if out.Height < 0 {
+		out.Height = 0
+	}
+	return out
+}
+
 // SplitSidecar returns the primary and sidecar rectangles given a monitor rect and desired width percentage.
-func SplitSidecar(monitor Rect, side string, widthPercent float64, gaps Gaps) (main Rect, dock Rect) {
+func SplitSidecar(monitor Rect, reserved Insets, side string, widthPercent float64, gaps Gaps) (main Rect, dock Rect) {
 	const (
 		defaultWidth = 25
 		minWidth     = 10
@@ -36,7 +107,7 @@ func SplitSidecar(monitor Rect, side string, widthPercent float64, gaps Gaps) (m
 	if widthPercent > maxWidth {
 		widthPercent = maxWidth
 	}
-	usable := monitor
+	usable := applyInsets(monitor, reserved)
 	usable.X += gaps.Outer
 	usable.Y += gaps.Outer
 	usable.Width -= gaps.Outer * 2

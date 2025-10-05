@@ -4,7 +4,7 @@ import "testing"
 
 func TestSplitSidecarLeft(t *testing.T) {
 	monitor := Rect{X: 0, Y: 0, Width: 1000, Height: 800}
-	_, dock := SplitSidecar(monitor, "left", 25, Gaps{})
+	_, dock := SplitSidecar(monitor, Insets{}, "left", 25, Gaps{})
 	if dock.Width != 250 {
 		t.Fatalf("expected dock width 250, got %v", dock.Width)
 	}
@@ -15,7 +15,7 @@ func TestSplitSidecarLeft(t *testing.T) {
 
 func TestSplitSidecarClampsMinimumWidth(t *testing.T) {
 	monitor := Rect{X: 0, Y: 0, Width: 1000, Height: 800}
-	main, dock := SplitSidecar(monitor, "right", 5, Gaps{})
+	main, dock := SplitSidecar(monitor, Insets{}, "right", 5, Gaps{})
 	if dock.Width != 100 {
 		t.Fatalf("expected dock width to clamp to 100, got %v", dock.Width)
 	}
@@ -29,7 +29,7 @@ func TestSplitSidecarClampsMinimumWidth(t *testing.T) {
 
 func TestSplitSidecarAppliesGaps(t *testing.T) {
 	monitor := Rect{X: 0, Y: 0, Width: 1000, Height: 800}
-	main, dock := SplitSidecar(monitor, "left", 25, Gaps{Inner: 10, Outer: 20})
+	main, dock := SplitSidecar(monitor, Insets{}, "left", 25, Gaps{Inner: 10, Outer: 20})
 	if dock.X != 20 {
 		t.Fatalf("expected dock X to respect outer gap, got %v", dock.X)
 	}
@@ -53,4 +53,44 @@ func TestApproximatelyEqualUsesTolerance(t *testing.T) {
 	if ApproximatelyEqual(a, b, 0.5) {
 		t.Fatalf("expected rects to differ when tolerance is too small")
 	}
+}
+
+func TestSplitSidecarRespectsReservedInsets(t *testing.T) {
+	monitor := Rect{X: 0, Y: 0, Width: 1920, Height: 1080}
+	reserved := Insets{Top: 40, Bottom: 20, Left: 30, Right: 0}
+	main, dock := SplitSidecar(monitor, reserved, "left", 25, Gaps{})
+	if dock.X != 30 {
+		t.Fatalf("expected dock to start after left reserved inset, got %v", dock.X)
+	}
+	if dock.Y != 40 {
+		t.Fatalf("expected dock to start after top reserved inset, got %v", dock.Y)
+	}
+	if dock.Height != 1020 {
+		t.Fatalf("expected dock height to shrink by reserved insets, got %v", dock.Height)
+	}
+	if main.X <= dock.X {
+		t.Fatalf("expected main section to start after dock and inner gap")
+	}
+}
+
+func TestInsetsOverrideApplyOverridesValues(t *testing.T) {
+	base := Insets{Top: 10, Bottom: 20, Left: 5, Right: 5}
+	override := InsetsOverride{Top: floatPtr(30), Right: floatPtr(12)}
+	out := override.Apply(base)
+	if out.Top != 30 {
+		t.Fatalf("expected top override to apply, got %v", out.Top)
+	}
+	if out.Bottom != 20 {
+		t.Fatalf("expected bottom to remain base value, got %v", out.Bottom)
+	}
+	if out.Right != 12 {
+		t.Fatalf("expected right override to apply, got %v", out.Right)
+	}
+	if out.Left != 5 {
+		t.Fatalf("expected left to remain unchanged, got %v", out.Left)
+	}
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
 }

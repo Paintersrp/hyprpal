@@ -33,6 +33,7 @@ type Monitor struct {
 	ID                 int
 	Name               string
 	Rectangle          layout.Rect
+	Reserved           layout.Insets
 	ActiveWorkspaceID  int
 	FocusedWorkspaceID int
 }

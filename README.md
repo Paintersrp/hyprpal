@@ -123,6 +123,20 @@ modes:
 
 Place the configuration at `~/.config/hyprpal/config.yaml` to align with the provided systemd unit. `managedWorkspaces` scopes hyprpal’s actions to the listed workspace IDs by default—rules will be skipped elsewhere unless they set `allowUnmanaged: true`. Leaving the list empty allows every workspace to be managed. Use the root-level `gaps` block to mirror your Hyprland gap settings (outer gap trims the monitor rectangle, inner gap is placed between floated windows). `placementTolerancePx` controls how much wiggle room hyprpal allows when comparing rectangles for idempotence; keep it aligned with Hyprland’s rounding behavior (default `2px`, or `0` for exact matches). `layout.sidecarDock` enforces a width between 10–50% of the monitor; values below 10% are rejected during config loading. The daemon automatically reloads when this file changes and still honors `SIGHUP` (e.g. `systemctl --user reload hyprpal`) for manual reloads. Runtime flags such as `--dispatch=socket|hyprctl`, `--dry-run`, `--log-level`, and `--mode` let you adjust behavior without editing the config file.
 
+Need to keep space for a Waybar panel or a capture-card overlay? Declare manual safe zones with `monitors.<name>.reserved`. Hyprpal subtracts Hyprland’s `reserved` array first, then applies any overrides you specify so layouts never overlap the blocked area:
+
+```yaml
+monitors:
+  HDMI-A-1:
+    reserved:
+      top: 48    # pixels kept free above the usable monitor area
+      right: 0   # omit keys you don’t need—unspecified sides use Hyprland’s values
+      bottom: 0
+      left: 160 # e.g. leave room for a hardware capture preview
+```
+
+Only the sides you specify are overridden; omitted values continue using Hyprland’s live data so on-dock panels keep working without duplication.
+
 ### Adjust presets for your setup
 
 When reusing a preset, update monitor names, workspace IDs, and application classes to match your Hyprland environment. The accompanying READMEs in each [`examples/`](./examples/) preset (for instance, [`examples/dual-monitor/README.md`](./examples/dual-monitor/README.md)) call out the expected monitor names and client classes so you know what to tweak before copying the config. If you adopt multiple presets, consult each README to understand the assumptions around docking widths, preferred workspaces, and optional dependencies.

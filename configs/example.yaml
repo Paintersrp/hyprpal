@@ -7,6 +7,14 @@ redactTitles: false # set to true to hide client titles from logs and control AP
 gaps:
   inner: 8  # pixels between floating windows
   outer: 20 # pixels around monitor edges
+monitors:
+  # Optional per-monitor safe zones (overrides Hyprland's reserved values).
+  DP-1:
+    reserved:
+      top: 48    # keep room for a panel or screen recorder overlay
+      bottom: 0
+      left: 0
+      right: 0
 placementTolerancePx: 2.0 # slack for idempotence checks; set 0 for exact matches
 profiles:
   commsDock:

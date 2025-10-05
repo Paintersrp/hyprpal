@@ -4,17 +4,19 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hyprpal/hyprpal/internal/layout"
 	"gopkg.in/yaml.v3"
 )
 
 // Config is the top-level configuration document.
 type Config struct {
-	ManagedWorkspaces    []int           `yaml:"managedWorkspaces"`
-	Modes                []ModeConfig    `yaml:"modes"`
-	RedactTitles         bool            `yaml:"redactTitles"`
-	Gaps                 Gaps            `yaml:"gaps"`
-	PlacementTolerancePx float64         `yaml:"placementTolerancePx"`
-	Profiles             MatcherProfiles `yaml:"profiles"`
+	ManagedWorkspaces    []int                    `yaml:"managedWorkspaces"`
+	Modes                []ModeConfig             `yaml:"modes"`
+	RedactTitles         bool                     `yaml:"redactTitles"`
+	Gaps                 Gaps                     `yaml:"gaps"`
+	PlacementTolerancePx float64                  `yaml:"placementTolerancePx"`
+	Profiles             MatcherProfiles          `yaml:"profiles"`
+	Monitors             map[string]MonitorConfig `yaml:"monitors"`
 }
 
 // MatcherProfiles defines reusable client matcher templates by name.
@@ -63,6 +65,67 @@ type MatcherConfig struct {
 type Gaps struct {
 	Inner float64 `yaml:"inner"`
 	Outer float64 `yaml:"outer"`
+}
+
+// MonitorConfig allows overriding compositor-reported monitor properties.
+type MonitorConfig struct {
+	Reserved *ReservedConfig `yaml:"reserved"`
+}
+
+// ReservedConfig exposes manual safe areas for a monitor.
+type ReservedConfig struct {
+	Top    *float64 `yaml:"top"`
+	Bottom *float64 `yaml:"bottom"`
+	Left   *float64 `yaml:"left"`
+	Right  *float64 `yaml:"right"`
+}
+
+// Validate ensures manual monitor overrides are sane.
+func (m MonitorConfig) Validate() error {
+	if m.Reserved == nil {
+		return nil
+	}
+	return m.Reserved.Validate()
+}
+
+// Validate ensures reserved inset overrides are non-negative.
+func (r *ReservedConfig) Validate() error {
+	if r == nil {
+		return nil
+	}
+	if r.Top != nil && *r.Top < 0 {
+		return fmt.Errorf("top reserved inset cannot be negative, got %v", *r.Top)
+	}
+	if r.Bottom != nil && *r.Bottom < 0 {
+		return fmt.Errorf("bottom reserved inset cannot be negative, got %v", *r.Bottom)
+	}
+	if r.Left != nil && *r.Left < 0 {
+		return fmt.Errorf("left reserved inset cannot be negative, got %v", *r.Left)
+	}
+	if r.Right != nil && *r.Right < 0 {
+		return fmt.Errorf("right reserved inset cannot be negative, got %v", *r.Right)
+	}
+	return nil
+}
+
+func (r *ReservedConfig) toOverride() layout.InsetsOverride {
+	if r == nil {
+		return layout.InsetsOverride{}
+	}
+	return layout.InsetsOverride{
+		Top:    cloneFloatPtr(r.Top),
+		Bottom: cloneFloatPtr(r.Bottom),
+		Left:   cloneFloatPtr(r.Left),
+		Right:  cloneFloatPtr(r.Right),
+	}
+}
+
+func cloneFloatPtr(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	val := *v
+	return &val
 }
 
 // ModeConfig represents a named mode with a set of rules.
@@ -141,6 +204,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("profile %q: %w", name, err)
 		}
 	}
+	for name, monitor := range c.Monitors {
+		if err := monitor.Validate(); err != nil {
+			return fmt.Errorf("monitor %q: %w", name, err)
+		}
+	}
 	managed := map[int]struct{}{}
 	for _, ws := range c.ManagedWorkspaces {
 		if ws <= 0 {
@@ -198,6 +266,24 @@ func (c *Config) validateMatcherReferences(mode string, rule RuleConfig) error {
 		}
 	}
 	return nil
+}
+
+// MonitorReservedOverrides returns a cloned map of manual reserved inset overrides.
+func (c *Config) MonitorReservedOverrides() map[string]layout.InsetsOverride {
+	if len(c.Monitors) == 0 {
+		return nil
+	}
+	overrides := make(map[string]layout.InsetsOverride, len(c.Monitors))
+	for name, monitor := range c.Monitors {
+		if monitor.Reserved == nil {
+			continue
+		}
+		overrides[name] = monitor.Reserved.toOverride()
+	}
+	if len(overrides) == 0 {
+		return nil
+	}
+	return overrides
 }
 
 // Validate ensures matcher configuration has at least one selection criteria.

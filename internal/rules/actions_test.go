@@ -55,7 +55,7 @@ func TestSidecarDockPlanIdempotentLogs(t *testing.T) {
 		}},
 	}
 
-	_, dock := layout.SplitSidecar(world.Monitors[0].Rectangle, action.Side, action.WidthPercent, layout.Gaps{})
+	_, dock := layout.SplitSidecar(world.Monitors[0].Rectangle, world.Monitors[0].Reserved, action.Side, action.WidthPercent, layout.Gaps{})
 
 	buf := &bytes.Buffer{}
 	logger := util.NewLoggerWithWriter(util.LevelInfo, buf)
@@ -126,6 +126,91 @@ func TestSidecarDockPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "workspace 5 unmanaged") {
 		t.Fatalf("expected unmanaged workspace log, got %q", buf.String())
+	}
+}
+
+func TestSidecarDockPlanRespectsCompositorReservedInsets(t *testing.T) {
+	action := &SidecarDockAction{
+		WorkspaceID:  1,
+		Side:         "right",
+		WidthPercent: 25,
+		Match:        func(state.Client) bool { return true },
+	}
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xabc",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+		}},
+		Workspaces: []state.Workspace{{ID: 1, MonitorName: "DP-1"}},
+		Monitors: []state.Monitor{{
+			Name:      "DP-1",
+			Rectangle: layout.Rect{X: 0, Y: 0, Width: 1600, Height: 900},
+			Reserved:  layout.Insets{Top: 60},
+		}},
+	}
+	ctx := ActionContext{
+		World:              world,
+		RuleName:           "sidecar",
+		Gaps:               layout.Gaps{},
+		PlacementTolerance: 2,
+	}
+	plan, err := action.Plan(ctx)
+	if err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+	if len(plan.Commands) < 3 {
+		t.Fatalf("expected float/move/resize commands, got %d", len(plan.Commands))
+	}
+	move := plan.Commands[2]
+	if move[0] != "movewindowpixel" {
+		t.Fatalf("expected movewindowpixel command, got %v", move)
+	}
+	if move[3] != "60" {
+		t.Fatalf("expected Y position to honor compositor reserved inset, got %s", move[3])
+	}
+}
+
+func TestSidecarDockPlanUsesOverrideReservedInsets(t *testing.T) {
+	action := &SidecarDockAction{
+		WorkspaceID:  1,
+		Side:         "left",
+		WidthPercent: 25,
+		Match:        func(state.Client) bool { return true },
+	}
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xdef",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+		}},
+		Workspaces: []state.Workspace{{ID: 1, MonitorName: "DP-1"}},
+		Monitors: []state.Monitor{{
+			Name:      "DP-1",
+			Rectangle: layout.Rect{X: 0, Y: 0, Width: 1600, Height: 900},
+		}},
+	}
+	overrideY := 80.0
+	overrides := map[string]layout.InsetsOverride{
+		"DP-1": {Top: &overrideY},
+	}
+	ctx := ActionContext{
+		World:                    world,
+		RuleName:                 "sidecar",
+		MonitorReservedOverrides: overrides,
+		Gaps:                     layout.Gaps{},
+		PlacementTolerance:       2,
+	}
+	plan, err := action.Plan(ctx)
+	if err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+	if len(plan.Commands) < 3 {
+		t.Fatalf("expected float/move/resize commands, got %d", len(plan.Commands))
+	}
+	move := plan.Commands[2]
+	if move[3] != "80" {
+		t.Fatalf("expected override to set Y position to 80, got %s", move[3])
 	}
 }
 
