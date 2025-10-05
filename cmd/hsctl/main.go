@@ -115,7 +115,11 @@ func runCheck(args []string, stdout io.Writer, stderr io.Writer) error {
 
 	fmt.Fprintf(stderr, "Configuration has %d issue(s):\n", len(lintErrs))
 	for _, lintErr := range lintErrs {
-		fmt.Fprintf(stderr, "- %s\n", lintErr.Error())
+		if lintErr.Path != "" {
+			fmt.Fprintf(stderr, "- %s: %s: %s\n", *configPath, lintErr.Path, lintErr.Message)
+			continue
+		}
+		fmt.Fprintf(stderr, "- %s: %s\n", *configPath, lintErr.Message)
 	}
 	return fmt.Errorf("configuration validation failed")
 }

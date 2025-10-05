@@ -42,9 +42,10 @@ func (r *configReloader) Reload(ctx context.Context, reason string) error {
 		r.logDiff(raw)
 		return err
 	}
-	if err := cfg.Validate(); err != nil {
+	if lintErrs := cfg.Lint(); len(lintErrs) > 0 {
+		r.logLintErrors(lintErrs)
 		r.logDiff(raw)
-		return err
+		return fmt.Errorf(lintErrs[0].Error())
 	}
 	modes, err := rules.BuildModes(cfg)
 	if err != nil {
@@ -78,4 +79,15 @@ func (r *configReloader) logDiff(current []byte) {
 		return
 	}
 	r.logger.Warnf("config change rejected; diff vs last valid config:\n%s", diff)
+}
+
+func (r *configReloader) logLintErrors(errs []config.LintError) {
+	r.logger.Warnf("config validation failed with %d issue(s):", len(errs))
+	for _, lintErr := range errs {
+		if lintErr.Path != "" {
+			r.logger.Warnf(" - %s: %s", lintErr.Path, lintErr.Message)
+			continue
+		}
+		r.logger.Warnf(" - %s", lintErr.Message)
+	}
 }
