@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -38,6 +39,8 @@ func (t realTicker) C() <-chan time.Time {
 type subscribeFunc func(ctx context.Context, logger *util.Logger) (<-chan ipc.Event, error)
 
 const defaultPeriodicReconcileInterval = 60 * time.Second
+
+var errMonitorSnapshotRequired = errors.New("monitor geometry requires full snapshot")
 
 // Engine ties together the world model, rules, and IPC.
 type Engine struct {
@@ -386,7 +389,11 @@ func (e *Engine) applyEvent(ctx context.Context, ev ipc.Event) error {
 	}
 	e.mu.Unlock()
 	if err != nil {
-		e.logger.Warnf("incremental update fallback for %s: %v", ev.Kind, err)
+		if errors.Is(err, errMonitorSnapshotRequired) {
+			e.logger.Warnf("incremental update fallback for %s: monitor geometry requires full snapshot", ev.Kind)
+		} else {
+			e.logger.Warnf("incremental update fallback for %s: %v", ev.Kind, err)
+		}
 		return e.reconcileAndApply(ctx)
 	}
 	if !mutated {
@@ -467,15 +474,14 @@ func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, erro
 		}
 		return world.MoveClient(address, workspaceID, ws.MonitorName)
 	case "monitoradded":
-		monitorID, monitorName, err := parseMonitorPayload(ev.Payload)
+		_, monitorName, err := parseMonitorPayload(ev.Payload)
 		if err != nil {
 			return false, err
 		}
 		if monitorName == "" {
 			return false, fmt.Errorf("monitoradded missing name")
 		}
-		changed := world.UpsertMonitor(state.Monitor{ID: monitorID, Name: monitorName})
-		return changed, nil
+		return false, fmt.Errorf("%w: %s", errMonitorSnapshotRequired, monitorName)
 	case "monitorremoved":
 		_, monitorName, err := parseMonitorPayload(ev.Payload)
 		if err != nil {

@@ -849,6 +849,61 @@ func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 	}
 }
 
+func TestApplyEventMonitorAddedForcesReconcile(t *testing.T) {
+	ctx := context.Background()
+	hypr := &fakeHyprctl{
+		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+	}
+	logger := util.NewLogger(util.LevelInfo)
+	eng := New(hypr, logger, nil, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(ctx); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+
+	clientsCalls := hypr.listClientsCalls
+	workspacesCalls := hypr.listWorkspacesCalls
+	monitorsCalls := hypr.listMonitorsCalls
+	activeWorkspaceCalls := hypr.activeWorkspaceCalls
+	activeClientCalls := hypr.activeClientCalls
+
+	hypr.monitors = []state.Monitor{
+		{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}},
+		{ID: 2, Name: "DP-2", Rectangle: layout.Rect{Width: 1280, Height: 1024}},
+	}
+
+	event := ipc.Event{Kind: "monitoradded", Payload: "2,DP-2"}
+	if err := eng.applyEvent(ctx, event); err != nil {
+		t.Fatalf("applyEvent returned error: %v", err)
+	}
+
+	if hypr.listClientsCalls != clientsCalls+1 || hypr.listWorkspacesCalls != workspacesCalls+1 ||
+		hypr.listMonitorsCalls != monitorsCalls+1 || hypr.activeWorkspaceCalls != activeWorkspaceCalls+1 ||
+		hypr.activeClientCalls != activeClientCalls+1 {
+		t.Fatalf("expected full datasource refresh after monitoradded, got %+v", map[string]int{
+			"clients":         hypr.listClientsCalls - clientsCalls,
+			"workspaces":      hypr.listWorkspacesCalls - workspacesCalls,
+			"monitors":        hypr.listMonitorsCalls - monitorsCalls,
+			"activeWorkspace": hypr.activeWorkspaceCalls - activeWorkspaceCalls,
+			"activeClient":    hypr.activeClientCalls - activeClientCalls,
+		})
+	}
+
+	world := eng.LastWorld()
+	if world == nil {
+		t.Fatalf("expected cached world after monitoradded")
+	}
+	monitor := world.MonitorByName("DP-2")
+	if monitor == nil {
+		t.Fatalf("expected DP-2 monitor in cached world, got %+v", world.Monitors)
+	}
+	if monitor.Rectangle.Width == 0 || monitor.Rectangle.Height == 0 {
+		t.Fatalf("expected DP-2 monitor to have geometry, got %+v", monitor.Rectangle)
+	}
+}
+
 func TestApplyEventWindowTitleEvaluatesIncrementally(t *testing.T) {
 	ctx := context.Background()
 	hypr := &fakeHyprctl{
