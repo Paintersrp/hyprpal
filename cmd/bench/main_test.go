@@ -109,8 +109,8 @@ func TestBuildReport(t *testing.T) {
 		3 * time.Millisecond,
 		4 * time.Millisecond,
 	}
-	start := runtime.MemStats{Mallocs: 1000, TotalAlloc: 4096}
-	end := runtime.MemStats{Mallocs: 1500, TotalAlloc: 8192}
+	start := runtime.MemStats{Mallocs: 1000, TotalAlloc: 4096, HeapAlloc: 2048, HeapObjects: 200}
+	end := runtime.MemStats{Mallocs: 1500, TotalAlloc: 8192, HeapAlloc: 3072, HeapObjects: 260}
 
 	summary := buildReport(fixture, "Coding", 2, durations, 8, start, end).Summary
 
@@ -131,6 +131,18 @@ func TestBuildReport(t *testing.T) {
 	}
 	if math.Abs(summary.EventsPerSecond-400) > 1e-6 {
 		t.Fatalf("EventsPerSecond = %f, want 400", summary.EventsPerSecond)
+	}
+	if summary.Allocations.HeapAllocDelta != 1024 {
+		t.Fatalf("Allocations.HeapAllocDelta = %d, want 1024", summary.Allocations.HeapAllocDelta)
+	}
+	if math.Abs(summary.Allocations.HeapAllocPerEvent-256) > 1e-9 {
+		t.Fatalf("Allocations.HeapAllocPerEvent = %f, want 256", summary.Allocations.HeapAllocPerEvent)
+	}
+	if summary.Allocations.HeapObjectsDelta != 60 {
+		t.Fatalf("Allocations.HeapObjectsDelta = %d, want 60", summary.Allocations.HeapObjectsDelta)
+	}
+	if math.Abs(summary.Allocations.HeapObjectsPerEvent-15) > 1e-9 {
+		t.Fatalf("Allocations.HeapObjectsPerEvent = %f, want 15", summary.Allocations.HeapObjectsPerEvent)
 	}
 }
 

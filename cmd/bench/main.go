@@ -51,12 +51,20 @@ type benchLatencyStats struct {
 }
 
 type benchAllocationStats struct {
-	Total         uint64  `json:"totalAllocations"`
-	PerEvent      float64 `json:"allocationsPerEvent"`
-	BytesTotal    uint64  `json:"bytesTotal"`
-	BytesPerEvent float64 `json:"bytesPerEvent"`
-	MiBTotal      float64 `json:"miBTotal"`
-	MiBPerEvent   float64 `json:"miBPerEvent"`
+	Total               uint64  `json:"totalAllocations"`
+	PerEvent            float64 `json:"allocationsPerEvent"`
+	BytesTotal          uint64  `json:"bytesTotal"`
+	BytesPerEvent       float64 `json:"bytesPerEvent"`
+	MiBTotal            float64 `json:"miBTotal"`
+	MiBPerEvent         float64 `json:"miBPerEvent"`
+	HeapAllocStart      uint64  `json:"heapAllocStartBytes"`
+	HeapAllocEnd        uint64  `json:"heapAllocEndBytes"`
+	HeapAllocDelta      int64   `json:"heapAllocDeltaBytes"`
+	HeapAllocPerEvent   float64 `json:"heapAllocDeltaPerEvent"`
+	HeapObjectsStart    uint64  `json:"heapObjectsStart"`
+	HeapObjectsEnd      uint64  `json:"heapObjectsEnd"`
+	HeapObjectsDelta    int64   `json:"heapObjectsDelta"`
+	HeapObjectsPerEvent float64 `json:"heapObjectsPerEvent"`
 }
 
 type benchDispatchStats struct {
@@ -316,6 +324,17 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 		bytesPerEvent = float64(bytesAllocated) / float64(totalEvents)
 	}
 
+	heapAllocDelta := int64(end.HeapAlloc) - int64(start.HeapAlloc)
+	heapAllocPerEvent := float64(heapAllocDelta)
+	if totalEvents > 0 {
+		heapAllocPerEvent = float64(heapAllocDelta) / float64(totalEvents)
+	}
+	heapObjectsDelta := int64(end.HeapObjects) - int64(start.HeapObjects)
+	heapObjectsPerEvent := float64(heapObjectsDelta)
+	if totalEvents > 0 {
+		heapObjectsPerEvent = float64(heapObjectsDelta) / float64(totalEvents)
+	}
+
 	durationsMs := make([]float64, len(durations))
 	for i, d := range durations {
 		durationsMs[i] = toMillis(d)
@@ -340,12 +359,20 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 			Max:    toMillis(max),
 		},
 		Allocations: benchAllocationStats{
-			Total:         allocs,
-			PerEvent:      allocsPerEvent,
-			BytesTotal:    bytesAllocated,
-			BytesPerEvent: bytesPerEvent,
-			MiBTotal:      float64(bytesAllocated) / (1024 * 1024),
-			MiBPerEvent:   bytesPerEvent / (1024 * 1024),
+			Total:               allocs,
+			PerEvent:            allocsPerEvent,
+			BytesTotal:          bytesAllocated,
+			BytesPerEvent:       bytesPerEvent,
+			MiBTotal:            float64(bytesAllocated) / (1024 * 1024),
+			MiBPerEvent:         bytesPerEvent / (1024 * 1024),
+			HeapAllocStart:      start.HeapAlloc,
+			HeapAllocEnd:        end.HeapAlloc,
+			HeapAllocDelta:      heapAllocDelta,
+			HeapAllocPerEvent:   heapAllocPerEvent,
+			HeapObjectsStart:    start.HeapObjects,
+			HeapObjectsEnd:      end.HeapObjects,
+			HeapObjectsDelta:    heapObjectsDelta,
+			HeapObjectsPerEvent: heapObjectsPerEvent,
 		},
 		TotalDurationMs: toMillis(total),
 		EventsPerSecond: eventsPerSecond(total, totalEvents),

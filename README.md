@@ -206,6 +206,11 @@ containing `kind>>payload` lines; in the latter case the base world snapshot fro
 recorded stream did not specify one. Pass `PROFILE=1` to emit CPU/heap profiles in `docs/flamegraphs/` (see
 [docs/perf.md](docs/perf.md) for the exact workflow plus instructions for replaying your own capture).
 
+The summary payload now includes `heapAllocDeltaBytes`/`heapObjectsDelta` alongside the existing allocation counters so you can
+track the net heap growth per iteration. This makes it straightforward to spot regressions relative to v0.4 (which routinely
+left >64 KB of heap behind after each iteration) and validate that the pooled worlds introduced in v0.5 release almost all
+temporary objects before the next event arrives.
+
 **Key gains over v0.4 (synthetic Coding-mode stream, 25 iterations, Go 1.22.2 on Ryzen 7 7840U):**
 
 | Metric | v0.4 | v0.5 | Δ |

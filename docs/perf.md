@@ -65,6 +65,10 @@ fixture. `cmd/bench` prints the summary in JSON; capture the block with
 | Bytes / event | 126 KB | 45 KB | −64% |
 | Dispatches / iteration | 41 | 36 | −12% |
 
+`cmd/bench` also captures the net heap change between the GC sweeps that wrap the replay via the `heapAllocDeltaBytes` and
+`heapObjectsDelta` fields. In v0.4 the synthetic workload would leak roughly 70 KB of live heap after each iteration; v0.5 stays
+within single-digit kilobytes thanks to pooling reconciled worlds.
+
 ## What changed in v0.5
 
 - **Rect batching:** the engine now groups compatible resize/move pairs before
