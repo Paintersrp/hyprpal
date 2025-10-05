@@ -227,8 +227,8 @@ func (e *Engine) Run(ctx context.Context) error {
 				"payload": payload,
 			})
 			if e.isInteresting(ev.Kind) {
-				if err := e.reconcileAndApply(ctx); err != nil {
-					e.logger.Errorf("reconcile failed: %v", err)
+				if err := e.applyEvent(ctx, ev); err != nil {
+					e.logger.Errorf("incremental apply failed: %v", err)
 				}
 			}
 		}
@@ -246,31 +246,27 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	redact := e.redactTitlesEnabled()
-	storedWorld := world
-	if redact {
-		storedWorld = state.CloneWorld(world)
-		redactWorldTitles(storedWorld)
-	}
 	e.mu.Lock()
 	prev := e.lastWorld
-	e.lastWorld = storedWorld
+	e.lastWorld = world
 	e.mu.Unlock()
 
 	counts := map[string]int{
-		"clients":    len(storedWorld.Clients),
-		"workspaces": len(storedWorld.Workspaces),
-		"monitors":   len(storedWorld.Monitors),
+		"clients":    len(world.Clients),
+		"workspaces": len(world.Workspaces),
+		"monitors":   len(world.Monitors),
 	}
 	e.trace("world.reconciled", map[string]any{
 		"counts":          counts,
-		"activeWorkspace": storedWorld.ActiveWorkspaceID,
-		"activeClient":    storedWorld.ActiveClientAddress,
-		"delta":           worldDelta(prev, storedWorld),
+		"activeWorkspace": world.ActiveWorkspaceID,
+		"activeClient":    world.ActiveClientAddress,
+		"delta":           worldDelta(prev, world),
 	})
+	return e.evaluateAndApply(world, time.Now(), true)
+}
 
-	now := time.Now()
-	plan, rules := e.evaluate(world, now, true)
+func (e *Engine) evaluateAndApply(world *state.World, now time.Time, log bool) error {
+	plan, rules := e.evaluate(world, now, log)
 	e.trace("plan.aggregated", map[string]any{
 		"commandCount": len(plan.Commands),
 		"commands":     plan.Commands,
@@ -280,6 +276,8 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	}
 
 	e.markDebounce(rules, now)
+
+	redact := e.redactTitlesEnabled()
 
 	if e.dryRun {
 		for _, cmd := range plan.Commands {
@@ -322,6 +320,207 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 	return nil
 }
 
+func (e *Engine) applyEvent(ctx context.Context, ev ipc.Event) error {
+	e.mu.Lock()
+	if e.lastWorld == nil {
+		e.mu.Unlock()
+		return e.reconcileAndApply(ctx)
+	}
+	prev := state.CloneWorld(e.lastWorld)
+	mutated, err := e.mutateWorldLocked(e.lastWorld, ev)
+	world := e.lastWorld
+	var delta map[string]any
+	if mutated {
+		delta = worldDelta(prev, world)
+	}
+	e.mu.Unlock()
+	if err != nil {
+		e.logger.Warnf("incremental update fallback for %s: %v", ev.Kind, err)
+		return e.reconcileAndApply(ctx)
+	}
+	if !mutated {
+		return nil
+	}
+	e.trace("world.incremental", map[string]any{
+		"event": ev.Kind,
+		"delta": delta,
+	})
+	return e.evaluateAndApply(world, time.Now(), true)
+}
+
+func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, error) {
+	switch ev.Kind {
+	case "openwindow":
+		client, err := parseOpenWindowPayload(ev.Payload)
+		if err != nil {
+			return false, err
+		}
+		if client.Address == "" {
+			return false, fmt.Errorf("openwindow missing address")
+		}
+		if client.WorkspaceID != 0 {
+			ws := world.WorkspaceByID(client.WorkspaceID)
+			if ws == nil {
+				return false, fmt.Errorf("workspace %d not found", client.WorkspaceID)
+			}
+			if client.MonitorName == "" {
+				client.MonitorName = ws.MonitorName
+			}
+		}
+		return world.UpsertClient(client)
+	case "closewindow":
+		address := strings.TrimSpace(ev.Payload)
+		if address == "" {
+			return false, fmt.Errorf("closewindow missing address")
+		}
+		_, err := world.RemoveClient(address)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	case "activewindow":
+		address := strings.TrimSpace(ev.Payload)
+		if address == "" || strings.EqualFold(address, "0x0") {
+			changed := world.SetActiveClient("")
+			return changed, nil
+		}
+		changed := world.SetActiveClient(address)
+		return changed, nil
+	case "workspace":
+		id, monitorName, err := parseWorkspacePayload(ev.Payload)
+		if err != nil {
+			return false, err
+		}
+		changed, err := world.SetActiveWorkspace(id)
+		if err != nil {
+			return false, err
+		}
+		if monitorName != "" {
+			bound, bindErr := world.BindWorkspaceToMonitor(id, monitorName)
+			if bindErr != nil {
+				return false, bindErr
+			}
+			if bound {
+				changed = true
+			}
+		}
+		return changed, nil
+	case "movewindow":
+		address, workspaceID, err := parseMoveWindowPayload(ev.Payload)
+		if err != nil {
+			return false, err
+		}
+		ws := world.WorkspaceByID(workspaceID)
+		if ws == nil {
+			return false, fmt.Errorf("workspace %d not found", workspaceID)
+		}
+		return world.MoveClient(address, workspaceID, ws.MonitorName)
+	case "monitoradded":
+		monitorID, monitorName, err := parseMonitorPayload(ev.Payload)
+		if err != nil {
+			return false, err
+		}
+		if monitorName == "" {
+			return false, fmt.Errorf("monitoradded missing name")
+		}
+		changed := world.UpsertMonitor(state.Monitor{ID: monitorID, Name: monitorName})
+		return changed, nil
+	case "monitorremoved":
+		_, monitorName, err := parseMonitorPayload(ev.Payload)
+		if err != nil {
+			return false, err
+		}
+		if monitorName == "" {
+			return false, fmt.Errorf("monitorremoved missing name")
+		}
+		changed, removeErr := world.RemoveMonitor(monitorName)
+		if removeErr != nil {
+			return false, removeErr
+		}
+		return changed, nil
+	default:
+		return false, nil
+	}
+}
+
+func parseOpenWindowPayload(payload string) (state.Client, error) {
+	parts := splitPayload(payload, 4)
+	if len(parts) < 3 {
+		return state.Client{}, fmt.Errorf("invalid openwindow payload %q", payload)
+	}
+	workspaceID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return state.Client{}, fmt.Errorf("invalid workspace id %q: %w", parts[1], err)
+	}
+	client := state.Client{
+		Address:     parts[0],
+		WorkspaceID: workspaceID,
+		Class:       parts[2],
+	}
+	if len(parts) == 4 {
+		client.Title = parts[3]
+	}
+	return client, nil
+}
+
+func parseMoveWindowPayload(payload string) (string, int, error) {
+	parts := splitPayload(payload, 2)
+	if len(parts) != 2 {
+		return "", 0, fmt.Errorf("invalid movewindow payload %q", payload)
+	}
+	workspaceID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid workspace id %q: %w", parts[1], err)
+	}
+	return parts[0], workspaceID, nil
+}
+
+func parseWorkspacePayload(payload string) (int, string, error) {
+	parts := splitPayload(payload, 2)
+	if len(parts) == 0 {
+		return 0, "", fmt.Errorf("invalid workspace payload %q", payload)
+	}
+	if len(parts) == 1 {
+		id, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return 0, "", fmt.Errorf("invalid workspace id %q: %w", parts[0], err)
+		}
+		return id, "", nil
+	}
+	id, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid workspace id %q: %w", parts[1], err)
+	}
+	return id, parts[0], nil
+}
+
+func parseMonitorPayload(payload string) (int, string, error) {
+	parts := splitPayload(payload, 2)
+	if len(parts) == 0 {
+		return 0, "", fmt.Errorf("invalid monitor payload %q", payload)
+	}
+	if len(parts) == 1 {
+		return 0, parts[0], nil
+	}
+	id, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid monitor id %q: %w", parts[0], err)
+	}
+	return id, parts[1], nil
+}
+
+func splitPayload(payload string, maxParts int) []string {
+	trimmed := strings.TrimSpace(payload)
+	if trimmed == "" {
+		return nil
+	}
+	parts := strings.SplitN(trimmed, ",", maxParts)
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
+}
+
 // PreviewPlan evaluates the current world and returns the pending plan without
 // dispatching commands.
 func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedCommand, error) {
@@ -329,13 +528,8 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 	if err != nil {
 		return nil, err
 	}
-	storedWorld := world
-	if e.redactTitlesEnabled() {
-		storedWorld = state.CloneWorld(world)
-		redactWorldTitles(storedWorld)
-	}
 	e.mu.Lock()
-	e.lastWorld = storedWorld
+	e.lastWorld = world
 	e.mu.Unlock()
 
 	_, rules := e.evaluate(world, time.Now(), false)
@@ -360,7 +554,14 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 func (e *Engine) LastWorld() *state.World {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.lastWorld
+	if e.lastWorld == nil {
+		return nil
+	}
+	snapshot := state.CloneWorld(e.lastWorld)
+	if e.redactTitles {
+		redactWorldTitles(snapshot)
+	}
+	return snapshot
 }
 
 // RuleEvaluationHistory returns the recent rule evaluation records.

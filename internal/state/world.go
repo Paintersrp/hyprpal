@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/hyprpal/hyprpal/internal/layout"
 )
@@ -167,4 +168,246 @@ func CloneWorld(src *World) *World {
 		copyWorld.Monitors = append([]Monitor(nil), src.Monitors...)
 	}
 	return &copyWorld
+}
+
+// UpsertClient inserts or replaces a client in the world and keeps workspace counts in sync.
+func (w *World) UpsertClient(client Client) (bool, error) {
+	if w == nil {
+		return false, errors.New("world is nil")
+	}
+	if client.WorkspaceID != 0 && w.WorkspaceByID(client.WorkspaceID) == nil {
+		return false, fmt.Errorf("workspace %d not found", client.WorkspaceID)
+	}
+	idx := -1
+	for i := range w.Clients {
+		if w.Clients[i].Address == client.Address {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		w.Clients = append(w.Clients, client)
+		if client.WorkspaceID != 0 {
+			w.incrementWorkspaceWindows(client.WorkspaceID)
+			if w.Clients[len(w.Clients)-1].MonitorName == "" {
+				if ws := w.WorkspaceByID(client.WorkspaceID); ws != nil {
+					w.Clients[len(w.Clients)-1].MonitorName = ws.MonitorName
+				}
+			}
+		}
+		w.RefreshFocus()
+		return true, nil
+	}
+	prev := w.Clients[idx]
+	w.Clients[idx] = client
+	if prev.WorkspaceID != client.WorkspaceID {
+		if prev.WorkspaceID != 0 {
+			w.decrementWorkspaceWindows(prev.WorkspaceID)
+		}
+		if client.WorkspaceID != 0 {
+			w.incrementWorkspaceWindows(client.WorkspaceID)
+			if w.Clients[idx].MonitorName == "" {
+				if ws := w.WorkspaceByID(client.WorkspaceID); ws != nil {
+					w.Clients[idx].MonitorName = ws.MonitorName
+				}
+			}
+		}
+	}
+	w.RefreshFocus()
+	changed := prev != client
+	return changed, nil
+}
+
+// RemoveClient removes the client with address from the world.
+func (w *World) RemoveClient(address string) (Client, error) {
+	if w == nil {
+		return Client{}, errors.New("world is nil")
+	}
+	for i := range w.Clients {
+		if w.Clients[i].Address == address {
+			removed := w.Clients[i]
+			if removed.WorkspaceID != 0 {
+				w.decrementWorkspaceWindows(removed.WorkspaceID)
+			}
+			w.Clients = append(w.Clients[:i], w.Clients[i+1:]...)
+			if w.ActiveClientAddress == address {
+				w.ActiveClientAddress = ""
+			}
+			w.RefreshFocus()
+			return removed, nil
+		}
+	}
+	return Client{}, fmt.Errorf("client %s not found", address)
+}
+
+// MoveClient changes the workspace binding for a client.
+func (w *World) MoveClient(address string, workspaceID int, monitorName string) (bool, error) {
+	if w == nil {
+		return false, errors.New("world is nil")
+	}
+	if workspaceID != 0 && w.WorkspaceByID(workspaceID) == nil {
+		return false, fmt.Errorf("workspace %d not found", workspaceID)
+	}
+	for i := range w.Clients {
+		if w.Clients[i].Address == address {
+			prev := w.Clients[i]
+			if prev.WorkspaceID == workspaceID {
+				monitorTarget := monitorName
+				if monitorTarget == "" {
+					if ws := w.WorkspaceByID(workspaceID); ws != nil {
+						monitorTarget = ws.MonitorName
+					}
+				}
+				if monitorTarget == prev.MonitorName {
+					return false, nil
+				}
+			}
+			if prev.WorkspaceID != 0 {
+				w.decrementWorkspaceWindows(prev.WorkspaceID)
+			}
+			if workspaceID != 0 {
+				w.incrementWorkspaceWindows(workspaceID)
+			}
+			w.Clients[i].WorkspaceID = workspaceID
+			if monitorName != "" {
+				w.Clients[i].MonitorName = monitorName
+			} else if ws := w.WorkspaceByID(workspaceID); ws != nil {
+				w.Clients[i].MonitorName = ws.MonitorName
+			}
+			w.RefreshFocus()
+			return true, nil
+		}
+	}
+	return false, fmt.Errorf("client %s not found", address)
+}
+
+// SetActiveClient updates the active client address and client focus flags.
+func (w *World) SetActiveClient(address string) bool {
+	if w == nil {
+		return false
+	}
+	if w.ActiveClientAddress == address {
+		w.RefreshFocus()
+		return false
+	}
+	w.ActiveClientAddress = address
+	w.RefreshFocus()
+	return true
+}
+
+// RefreshFocus recalculates the Focused flag for all clients.
+func (w *World) RefreshFocus() {
+	if w == nil {
+		return
+	}
+	active := w.ActiveClientAddress
+	for i := range w.Clients {
+		w.Clients[i].Focused = active != "" && w.Clients[i].Address == active
+	}
+}
+
+// SetActiveWorkspace updates the active workspace and monitor bindings.
+func (w *World) SetActiveWorkspace(id int) (bool, error) {
+	if w == nil {
+		return false, errors.New("world is nil")
+	}
+	if id != 0 && w.WorkspaceByID(id) == nil {
+		return false, fmt.Errorf("workspace %d not found", id)
+	}
+	if w.ActiveWorkspaceID == id {
+		return false, nil
+	}
+	w.ActiveWorkspaceID = id
+	if id != 0 {
+		if ws := w.WorkspaceByID(id); ws != nil {
+			w.updateMonitorWorkspaceBinding(ws.MonitorName, id)
+		}
+	}
+	return true, nil
+}
+
+// BindWorkspaceToMonitor updates the monitor assignment for a workspace.
+func (w *World) BindWorkspaceToMonitor(id int, monitorName string) (bool, error) {
+	if w == nil {
+		return false, errors.New("world is nil")
+	}
+	ws := w.WorkspaceByID(id)
+	if ws == nil {
+		return false, fmt.Errorf("workspace %d not found", id)
+	}
+	if ws.MonitorName == monitorName {
+		return false, nil
+	}
+	ws.MonitorName = monitorName
+	w.updateMonitorWorkspaceBinding(monitorName, id)
+	return true, nil
+}
+
+// UpsertMonitor inserts or updates a monitor description.
+func (w *World) UpsertMonitor(mon Monitor) bool {
+	if w == nil {
+		return false
+	}
+	for i := range w.Monitors {
+		if w.Monitors[i].Name == mon.Name {
+			if w.Monitors[i] == mon {
+				return false
+			}
+			w.Monitors[i] = mon
+			return true
+		}
+	}
+	w.Monitors = append(w.Monitors, mon)
+	return true
+}
+
+// RemoveMonitor deletes a monitor by name and clears workspace bindings.
+func (w *World) RemoveMonitor(name string) (bool, error) {
+	if w == nil {
+		return false, errors.New("world is nil")
+	}
+	for i := range w.Monitors {
+		if w.Monitors[i].Name == name {
+			w.Monitors = append(w.Monitors[:i], w.Monitors[i+1:]...)
+			for j := range w.Workspaces {
+				if w.Workspaces[j].MonitorName == name {
+					w.Workspaces[j].MonitorName = ""
+				}
+			}
+			return true, nil
+		}
+	}
+	return false, fmt.Errorf("monitor %s not found", name)
+}
+
+func (w *World) updateMonitorWorkspaceBinding(name string, workspaceID int) {
+	if name == "" {
+		return
+	}
+	for i := range w.Monitors {
+		if w.Monitors[i].Name == name {
+			w.Monitors[i].ActiveWorkspaceID = workspaceID
+			w.Monitors[i].FocusedWorkspaceID = workspaceID
+		}
+	}
+}
+
+func (w *World) incrementWorkspaceWindows(id int) {
+	if id == 0 {
+		return
+	}
+	if ws := w.WorkspaceByID(id); ws != nil {
+		ws.Windows++
+	}
+}
+
+func (w *World) decrementWorkspaceWindows(id int) {
+	if id == 0 {
+		return
+	}
+	if ws := w.WorkspaceByID(id); ws != nil {
+		if ws.Windows > 0 {
+			ws.Windows--
+		}
+	}
 }
