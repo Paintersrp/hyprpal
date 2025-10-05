@@ -5,12 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/hyprpal/hyprpal/internal/config"
 	"github.com/hyprpal/hyprpal/internal/control/client"
 	"github.com/hyprpal/hyprpal/internal/ui/tui"
 )
@@ -27,6 +29,19 @@ func run(argv []string) error {
 	fs.SetOutput(os.Stderr)
 	socket := fs.String("socket", "", "path to hyprpal control socket")
 	timeout := fs.Duration("timeout", 3*time.Second, "control request timeout")
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: %s [flags] <command> [args]\n", fs.Name())
+		fmt.Fprintln(fs.Output())
+		fmt.Fprintln(fs.Output(), "Commands:")
+		fmt.Fprintln(fs.Output(), "  mode get|set [mode]\tmanage active mode")
+		fmt.Fprintln(fs.Output(), "  reload\t\t\ttrigger a live config reload")
+		fmt.Fprintln(fs.Output(), "  plan [--explain]\tshow pending layout actions")
+		fmt.Fprintln(fs.Output(), "  tui\t\t\tlaunch the interactive TUI")
+		fmt.Fprintln(fs.Output(), "  check --config <path>\tvalidate a configuration file")
+		fmt.Fprintln(fs.Output())
+		fmt.Fprintln(fs.Output(), "Flags:")
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(argv); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -38,6 +53,10 @@ func run(argv []string) error {
 	if len(args) == 0 {
 		fs.Usage()
 		return fmt.Errorf("missing subcommand")
+	}
+
+	if args[0] == "check" {
+		return runCheck(args[1:], os.Stdout, os.Stderr)
 	}
 
 	cli, err := client.New(*socket)
@@ -61,10 +80,44 @@ func run(argv []string) error {
 		return runPlan(ctx, cli, args[1:])
 	case "tui":
 		return runTUI(cli)
+	case "check":
+		// This branch is handled above to avoid creating a client; keep here for completeness.
+		return runCheck(args[1:], os.Stdout, os.Stderr)
 	default:
 		fs.Usage()
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
+}
+
+func runCheck(args []string, stdout io.Writer, stderr io.Writer) error {
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	configPath := fs.String("config", "", "path to configuration file")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *configPath == "" {
+		fs.Usage()
+		return fmt.Errorf("check requires --config <path>")
+	}
+
+	lintErrs, err := config.LintFile(*configPath)
+	if err != nil {
+		return err
+	}
+	if len(lintErrs) == 0 {
+		fmt.Fprintln(stdout, "Configuration OK")
+		return nil
+	}
+
+	fmt.Fprintf(stderr, "Configuration has %d issue(s):\n", len(lintErrs))
+	for _, lintErr := range lintErrs {
+		fmt.Fprintf(stderr, "- %s\n", lintErr.Error())
+	}
+	return fmt.Errorf("configuration validation failed")
 }
 
 func runMode(ctx context.Context, cli *client.Client, args []string) error {

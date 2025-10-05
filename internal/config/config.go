@@ -9,6 +9,24 @@ import (
 	"github.com/hyprpal/hyprpal/internal/layout"
 )
 
+// LintError represents a configuration validation failure with path context.
+type LintError struct {
+	Path    string
+	Message string
+}
+
+// Error satisfies the error interface.
+func (e LintError) Error() string {
+	if e.Path == "" {
+		return e.Message
+	}
+	return fmt.Sprintf("%s: %s", e.Path, e.Message)
+}
+
+func newLintError(path, format string, args ...interface{}) LintError {
+	return LintError{Path: path, Message: fmt.Sprintf(format, args...)}
+}
+
 // Config is the top-level configuration document.
 type Config struct {
 	ManagedWorkspaces []int                    `yaml:"managedWorkspaces"`
@@ -410,6 +428,135 @@ func stringFromInterfaceValue(v interface{}, field string) (string, error) {
 	return s, nil
 }
 
+// Lint returns a slice of validation errors, covering all detected issues.
+func (c *Config) Lint() []LintError {
+	var errs []LintError
+	if len(c.Modes) == 0 {
+		errs = append(errs, newLintError("modes", "must define at least one mode"))
+	}
+	if c.Gaps.Inner < 0 {
+		errs = append(errs, newLintError("gaps.inner", "cannot be negative"))
+	}
+	if c.Gaps.Outer < 0 {
+		errs = append(errs, newLintError("gaps.outer", "cannot be negative"))
+	}
+	if c.TolerancePx < 0 {
+		errs = append(errs, newLintError("tolerancePx", "cannot be negative"))
+	}
+	for name, profile := range c.Profiles {
+		if err := profile.Validate(); err != nil {
+			errs = append(errs, newLintError(fmt.Sprintf("profiles.%s", name), err.Error()))
+		}
+	}
+	managed := map[int]int{}
+	for i, ws := range c.ManagedWorkspaces {
+		path := fmt.Sprintf("managedWorkspaces[%d]", i)
+		if ws <= 0 {
+			errs = append(errs, newLintError(path, "must be positive, got %d", ws))
+		}
+		if prevIdx, exists := managed[ws]; exists {
+			errs = append(errs, newLintError(path, "duplicate workspace ID %d (already defined at managedWorkspaces[%d])", ws, prevIdx))
+		} else {
+			managed[ws] = i
+		}
+	}
+	modeNames := map[string]int{}
+	for i, mode := range c.Modes {
+		modePath := fmt.Sprintf("modes[%d]", i)
+		if mode.Name == "" {
+			errs = append(errs, newLintError(modePath+".name", "cannot be empty"))
+		} else if prevIdx, exists := modeNames[mode.Name]; exists {
+			errs = append(errs, newLintError(modePath+".name", "duplicate mode name %q (already defined at modes[%d])", mode.Name, prevIdx))
+		} else {
+			modeNames[mode.Name] = i
+		}
+		for j, rule := range mode.Rules {
+			rulePath := fmt.Sprintf("%s.rules[%d]", modePath, j)
+			if rule.Name == "" {
+				errs = append(errs, newLintError(rulePath+".name", "cannot be empty"))
+			}
+			if len(rule.Actions) == 0 {
+				errs = append(errs, newLintError(rulePath+".actions", "must define at least one action"))
+			}
+			errs = append(errs, c.lintMatcherReferences(i, j, rule)...)
+		}
+	}
+	for name, insets := range c.ManualReserved {
+		if insets.HasNegative() {
+			errs = append(errs, newLintError(fmt.Sprintf("manualReserved.%s", name), "cannot include negative values"))
+		}
+	}
+	return errs
+}
+
+func (c *Config) lintMatcherReferences(modeIdx, ruleIdx int, rule RuleConfig) []LintError {
+	var errs []LintError
+	rulePath := fmt.Sprintf("modes[%d].rules[%d]", modeIdx, ruleIdx)
+	for actionIdx, action := range rule.Actions {
+		actionPath := fmt.Sprintf("%s.actions[%d]", rulePath, actionIdx)
+		if action.Type == "layout.grid" {
+			gridCfg, err := action.GridLayout()
+			if err != nil {
+				errs = append(errs, newLintError(actionPath, err.Error()))
+				continue
+			}
+			for slotIdx, slot := range gridCfg.Slots {
+				if slot.Match == nil {
+					continue
+				}
+				profileVal, ok := slot.Match["profile"]
+				if !ok {
+					continue
+				}
+				profilePath := fmt.Sprintf("%s.params.slots[%d].match.profile", actionPath, slotIdx)
+				profileName, ok := stringForLint(profileVal, profilePath, false, &errs)
+				if !ok {
+					continue
+				}
+				if _, exists := c.Profiles[profileName]; !exists {
+					errs = append(errs, newLintError(profilePath, "references unknown profile %q", profileName))
+				}
+			}
+			continue
+		}
+		matchVal, ok := action.Params["match"]
+		if !ok || matchVal == nil {
+			continue
+		}
+		matchMap, ok := matchVal.(map[string]interface{})
+		if !ok {
+			errs = append(errs, newLintError(actionPath+".params.match", "must be a mapping"))
+			continue
+		}
+		profileVal, ok := matchMap["profile"]
+		if !ok {
+			continue
+		}
+		profilePath := actionPath + ".params.match.profile"
+		profileName, ok := stringForLint(profileVal, profilePath, false, &errs)
+		if !ok {
+			continue
+		}
+		if _, exists := c.Profiles[profileName]; !exists {
+			errs = append(errs, newLintError(profilePath, "references unknown profile %q", profileName))
+		}
+	}
+	return errs
+}
+
+func stringForLint(v interface{}, path string, allowEmpty bool, errs *[]LintError) (string, bool) {
+	s, ok := v.(string)
+	if !ok {
+		*errs = append(*errs, newLintError(path, "must be a string"))
+		return "", false
+	}
+	if !allowEmpty && s == "" {
+		*errs = append(*errs, newLintError(path, "cannot be empty"))
+		return "", false
+	}
+	return s, true
+}
+
 // Load reads and validates a configuration file.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -424,6 +571,19 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// LintFile reads a configuration file and returns all validation errors.
+func LintFile(path string) ([]LintError, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	cfg, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Lint(), nil
 }
 
 // Parse decodes raw configuration data and applies default values without validation.
@@ -443,110 +603,13 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// Validate performs basic sanity checks.
+// Validate performs basic sanity checks and returns the first error encountered.
 func (c *Config) Validate() error {
-	if len(c.Modes) == 0 {
-		return fmt.Errorf("config must define at least one mode")
+	errs := c.Lint()
+	if len(errs) == 0 {
+		return nil
 	}
-	if c.Gaps.Inner < 0 {
-		return fmt.Errorf("gaps.inner cannot be negative")
-	}
-	if c.Gaps.Outer < 0 {
-		return fmt.Errorf("gaps.outer cannot be negative")
-	}
-	if c.TolerancePx < 0 {
-		return fmt.Errorf("tolerancePx cannot be negative")
-	}
-	for name, profile := range c.Profiles {
-		if err := profile.Validate(); err != nil {
-			return fmt.Errorf("profile %q: %w", name, err)
-		}
-	}
-	managed := map[int]struct{}{}
-	for _, ws := range c.ManagedWorkspaces {
-		if ws <= 0 {
-			return fmt.Errorf("managed workspace IDs must be positive, got %d", ws)
-		}
-		if _, exists := managed[ws]; exists {
-			return fmt.Errorf("duplicate managed workspace %d", ws)
-		}
-		managed[ws] = struct{}{}
-	}
-	names := map[string]struct{}{}
-	for _, m := range c.Modes {
-		if m.Name == "" {
-			return fmt.Errorf("mode name cannot be empty")
-		}
-		if _, exists := names[m.Name]; exists {
-			return fmt.Errorf("duplicate mode name %q", m.Name)
-		}
-		names[m.Name] = struct{}{}
-		for _, r := range m.Rules {
-			if r.Name == "" {
-				return fmt.Errorf("rule name cannot be empty (mode %q)", m.Name)
-			}
-			if len(r.Actions) == 0 {
-				return fmt.Errorf("rule %q in mode %q must define actions", r.Name, m.Name)
-			}
-			if err := c.validateMatcherReferences(m.Name, r); err != nil {
-				return err
-			}
-		}
-	}
-	for name, insets := range c.ManualReserved {
-		if insets.HasNegative() {
-			return fmt.Errorf("manualReserved entry %q cannot include negative values", name)
-		}
-	}
-	return nil
-}
-
-func (c *Config) validateMatcherReferences(mode string, rule RuleConfig) error {
-	for _, action := range rule.Actions {
-		if action.Type == "layout.grid" {
-			gridCfg, err := action.GridLayout()
-			if err != nil {
-				return fmt.Errorf("rule %q in mode %q: %w", rule.Name, mode, err)
-			}
-			for _, slot := range gridCfg.Slots {
-				if slot.Match == nil {
-					continue
-				}
-				profileNameRaw, ok := slot.Match["profile"]
-				if !ok {
-					continue
-				}
-				profileName, err := stringFromInterfaceValue(profileNameRaw, fmt.Sprintf("rule %s in mode %s slot %s match.profile", rule.Name, mode, slot.Name))
-				if err != nil {
-					return err
-				}
-				if _, exists := c.Profiles[profileName]; !exists {
-					return fmt.Errorf("rule %q in mode %q slot %q references unknown profile %q", rule.Name, mode, slot.Name, profileName)
-				}
-			}
-			continue
-		}
-		matchVal, ok := action.Params["match"]
-		if !ok || matchVal == nil {
-			continue
-		}
-		matchMap, ok := matchVal.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("rule %q in mode %q: match must be a mapping", rule.Name, mode)
-		}
-		profileNameRaw, ok := matchMap["profile"]
-		if !ok {
-			continue
-		}
-		profileName, err := stringFromInterfaceValue(profileNameRaw, fmt.Sprintf("rule %s in mode %s match.profile", rule.Name, mode))
-		if err != nil {
-			return err
-		}
-		if _, exists := c.Profiles[profileName]; !exists {
-			return fmt.Errorf("rule %q in mode %q references unknown profile %q", rule.Name, mode, profileName)
-		}
-	}
-	return nil
+	return fmt.Errorf(errs[0].Error())
 }
 
 // Validate ensures matcher configuration has at least one selection criteria.
