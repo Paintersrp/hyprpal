@@ -216,6 +216,15 @@ func parseClientMatcher(v interface{}, profiles map[string]config.MatcherConfig)
 		return nil, fmt.Errorf("match cannot combine allOfProfiles and anyOfProfiles")
 	}
 	if profileName, ok := m["profile"]; ok {
+		conflictKeys := make([]string, 0, 5)
+		for _, key := range []string{"allOfProfiles", "anyOfProfiles", "class", "anyClass", "titleRegex"} {
+			if _, exists := m[key]; exists {
+				conflictKeys = append(conflictKeys, key)
+			}
+		}
+		if len(conflictKeys) > 0 {
+			return nil, fmt.Errorf("match.profile cannot be combined with %s", strings.Join(conflictKeys, ", "))
+		}
 		name, err := assertString(profileName)
 		if err != nil {
 			return nil, err

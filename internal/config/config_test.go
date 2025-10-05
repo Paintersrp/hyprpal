@@ -80,6 +80,47 @@ func TestValidateProfileDefinition(t *testing.T) {
 	}
 }
 
+func TestValidateProfileConflictsWithSelectors(t *testing.T) {
+	tests := map[string]map[string]interface{}{
+		"withAllOfProfiles": {
+			"profile":       "comms",
+			"allOfProfiles": []interface{}{"comms"},
+		},
+		"withAnyOfProfiles": {
+			"profile":       "comms",
+			"anyOfProfiles": []interface{}{"comms"},
+		},
+		"withClass": {
+			"profile": "comms",
+			"class":   "Slack",
+		},
+	}
+
+	for name, match := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := Config{
+				Profiles: MatcherProfiles{
+					"comms": {AnyClass: []string{"Slack", "Discord"}},
+				},
+				Modes: []ModeConfig{{
+					Name: "Test",
+					Rules: []RuleConfig{{
+						Name: "Rule",
+						When: PredicateConfig{Mode: "Test"},
+						Actions: []ActionConfig{{
+							Type:   "layout.fullscreen",
+							Params: map[string]interface{}{"match": match},
+						}},
+					}},
+				}},
+			}
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("expected validation error for conflicting selectors")
+			}
+		})
+	}
+}
+
 func TestValidateProfileAllOfCombination(t *testing.T) {
 	cfg := Config{
 		Profiles: MatcherProfiles{

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -541,6 +542,20 @@ func (c *Config) lintMatchProfileRefs(path string, matchMap map[string]interface
 			if _, exists := c.Profiles[profileName]; !exists {
 				*errs = append(*errs, newLintError(profilePath, "references unknown profile %q", profileName))
 			}
+		}
+		conflictKeys := make([]string, 0, 2)
+		for _, key := range []string{"allOfProfiles", "anyOfProfiles"} {
+			if _, exists := matchMap[key]; exists {
+				conflictKeys = append(conflictKeys, key)
+			}
+		}
+		for _, key := range []string{"class", "anyClass", "titleRegex"} {
+			if _, exists := matchMap[key]; exists {
+				conflictKeys = append(conflictKeys, key)
+			}
+		}
+		if len(conflictKeys) > 0 {
+			*errs = append(*errs, newLintError(path, "cannot combine profile with %s", strings.Join(conflictKeys, ", ")))
 		}
 	}
 	if namesVal, ok := matchMap["allOfProfiles"]; ok {
