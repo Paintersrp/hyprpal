@@ -41,6 +41,44 @@ type benchEvent struct {
 	Delay time.Duration
 }
 
+type benchLatencyStats struct {
+	Min    float64 `json:"minMs"`
+	Mean   float64 `json:"meanMs"`
+	Median float64 `json:"medianMs"`
+	P95    float64 `json:"p95Ms"`
+	Max    float64 `json:"maxMs"`
+}
+
+type benchAllocationStats struct {
+	Total         uint64  `json:"totalAllocations"`
+	PerEvent      float64 `json:"allocationsPerEvent"`
+	BytesTotal    uint64  `json:"bytesTotal"`
+	BytesPerEvent float64 `json:"bytesPerEvent"`
+	MiBTotal      float64 `json:"miBTotal"`
+	MiBPerEvent   float64 `json:"miBPerEvent"`
+}
+
+type benchDispatchStats struct {
+	Total        int     `json:"total"`
+	PerIteration float64 `json:"perIteration"`
+}
+
+type benchSummary struct {
+	Fixture            string               `json:"fixture"`
+	Mode               string               `json:"mode"`
+	Iterations         int                  `json:"iterations"`
+	EventsPerIteration int                  `json:"eventsPerIteration"`
+	TotalEvents        int                  `json:"totalEvents"`
+	Dispatches         benchDispatchStats   `json:"dispatches"`
+	Latency            benchLatencyStats    `json:"latency"`
+	Allocations        benchAllocationStats `json:"allocations"`
+}
+
+type benchReport struct {
+	Summary     benchSummary `json:"summary"`
+	DurationsMs []float64    `json:"durationsMs"`
+}
+
 type benchHyprctl struct {
 	mu              sync.Mutex
 	clients         []state.Client
@@ -111,9 +149,10 @@ func (b *benchHyprctl) Dispatches() int {
 
 func main() {
 	defaultConfig := filepath.Join("configs", "example.yaml")
+	defaultFixturePath := filepath.Join("fixtures", "coding.json")
 
 	cfgPath := flag.String("config", defaultConfig, "path to YAML config")
-	fixturePath := flag.String("fixture", "", "path to replay fixture (JSON world or event log)")
+	fixturePath := flag.String("fixture", defaultFixturePath, "path to replay fixture (JSON world or event log)")
 	iterations := flag.Int("iterations", 10, "number of times to replay the fixture")
 	cpuProfile := flag.String("cpu-profile", "", "write CPU profile to file")
 	memProfile := flag.String("mem-profile", "", "write heap profile to file")
@@ -141,9 +180,15 @@ func main() {
 
 	fixture := defaultFixture()
 	if *fixturePath != "" {
-		fixture, err = loadFixture(*fixturePath, fixture)
-		if err != nil {
-			exitErr(fmt.Errorf("load fixture: %w", err))
+		loaded, loadErr := loadFixture(*fixturePath, fixture)
+		if loadErr != nil {
+			if errors.Is(loadErr, fs.ErrNotExist) && *fixturePath == defaultFixturePath {
+				logger.Warnf("fixture %s not found, using built-in synthetic stream", *fixturePath)
+			} else {
+				exitErr(fmt.Errorf("load fixture: %w", loadErr))
+			}
+		} else {
+			fixture = loaded
 		}
 	}
 
@@ -228,10 +273,13 @@ func main() {
 		}
 	}
 
-	summarizeResults(fixture, activeMode, *iterations, durations, totalDispatches, startMem, endMem)
+	report := buildReport(fixture, activeMode, *iterations, durations, totalDispatches, startMem, endMem)
+	if err := printReport(report); err != nil {
+		exitErr(fmt.Errorf("encode report: %w", err))
+	}
 }
 
-func summarizeResults(fixture benchFixture, mode string, iterations int, durations []time.Duration, dispatches int, start, end runtime.MemStats) {
+func buildReport(fixture benchFixture, mode string, iterations int, durations []time.Duration, dispatches int, start, end runtime.MemStats) benchReport {
 	totalEvents := len(fixture.Events) * iterations
 	var total time.Duration
 	for _, d := range durations {
@@ -258,16 +306,57 @@ func summarizeResults(fixture benchFixture, mode string, iterations int, duratio
 		allocsPerEvent = float64(allocs) / float64(totalEvents)
 	}
 	bytesAllocated := end.TotalAlloc - start.TotalAlloc
+	bytesPerEvent := float64(bytesAllocated)
+	if totalEvents > 0 {
+		bytesPerEvent = float64(bytesAllocated) / float64(totalEvents)
+	}
 
-	fmt.Printf("Fixture: %s\n", fixture.Name)
-	fmt.Printf("Mode: %s\n", mode)
-	fmt.Printf("Iterations: %d\n", iterations)
-	fmt.Printf("Events per iteration: %d\n", len(fixture.Events))
-	fmt.Printf("Total dispatches: %d (avg %.2f / iteration)\n", dispatches, float64(dispatches)/float64(iterations))
-	fmt.Printf("Latency per event (ms): min=%.3f avg=%.3f p50=%.3f p95=%.3f max=%.3f\n",
-		toMillis(min), toMillis(avg), toMillis(p50), toMillis(p95), toMillis(max))
-	fmt.Printf("Allocations: %.2f / event (%d total), bytes allocated: %.2f MiB\n",
-		allocsPerEvent, allocs, float64(bytesAllocated)/(1024*1024))
+	durationsMs := make([]float64, len(durations))
+	for i, d := range durations {
+		durationsMs[i] = toMillis(d)
+	}
+
+	summary := benchSummary{
+		Fixture:            fixture.Name,
+		Mode:               mode,
+		Iterations:         iterations,
+		EventsPerIteration: len(fixture.Events),
+		TotalEvents:        totalEvents,
+		Dispatches: benchDispatchStats{
+			Total:        dispatches,
+			PerIteration: safeDivide(dispatches, iterations),
+		},
+		Latency: benchLatencyStats{
+			Min:    toMillis(min),
+			Mean:   toMillis(avg),
+			Median: toMillis(p50),
+			P95:    toMillis(p95),
+			Max:    toMillis(max),
+		},
+		Allocations: benchAllocationStats{
+			Total:         allocs,
+			PerEvent:      allocsPerEvent,
+			BytesTotal:    bytesAllocated,
+			BytesPerEvent: bytesPerEvent,
+			MiBTotal:      float64(bytesAllocated) / (1024 * 1024),
+			MiBPerEvent:   bytesPerEvent / (1024 * 1024),
+		},
+	}
+
+	return benchReport{Summary: summary, DurationsMs: durationsMs}
+}
+
+func safeDivide(total int, count int) float64 {
+	if count == 0 {
+		return 0
+	}
+	return float64(total) / float64(count)
+}
+
+func printReport(report benchReport) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(report)
 }
 
 func percentile(sorted []time.Duration, p float64) time.Duration {
