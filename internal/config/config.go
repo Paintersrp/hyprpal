@@ -416,14 +416,23 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	cfg, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// Parse decodes raw configuration data and applies default values without validation.
+func Parse(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
 	cfg.applyDefaults()
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
 	return &cfg, nil
 }
 
