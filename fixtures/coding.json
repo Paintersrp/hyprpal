@@ -1,0 +1,53 @@
+{
+  "name": "synthetic-coding",
+  "mode": "Coding",
+  "activeWorkspace": 3,
+  "activeClient": "0xcode",
+  "monitors": [
+    {
+      "id": 1,
+      "name": "DP-1",
+      "rectangle": {"x":0,"y":0,"width":2560,"height":1440},
+      "activeWorkspaceID": 3
+    }
+  ],
+  "workspaces": [
+    {
+      "id": 3,
+      "name": "3",
+      "monitorName": "DP-1"
+    }
+  ],
+  "clients": [
+    {
+      "address": "0xcode",
+      "class": "code",
+      "title": "IDE",
+      "workspaceID": 3,
+      "monitorName": "DP-1"
+    },
+    {
+      "address": "0xterm",
+      "class": "kitty",
+      "title": "Terminal",
+      "workspaceID": 3,
+      "monitorName": "DP-1"
+    },
+    {
+      "address": "0xref",
+      "class": "firefox",
+      "title": "Docs",
+      "workspaceID": 3,
+      "monitorName": "DP-1"
+    }
+  ],
+  "events": [
+    {"kind": "windowtitle", "payload": "0xcode, Coding workspace"},
+    {"kind": "activewindow", "payload": "0xterm"},
+    {"kind": "openwindow", "payload": "0xslack, 3, Slack, Slack"},
+    {"kind": "openwindow", "payload": "0xdiscord, 3, discord, Discord"},
+    {"kind": "movewindow", "payload": "0xslack, 3"},
+    {"kind": "movewindow", "payload": "0xdiscord, 3"},
+    {"kind": "activewindow", "payload": "0xcode"}
+  ]
+}
