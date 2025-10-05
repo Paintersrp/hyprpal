@@ -16,6 +16,7 @@ type Rule struct {
 	Debounce          time.Duration
 	MutateUnmanaged   bool
 	ManagedWorkspaces map[int]struct{}
+	Priority          int
 }
 
 // Mode aggregates rules under a named mode.
@@ -54,6 +55,7 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 				Debounce:          debounce,
 				MutateUnmanaged:   rc.MutateUnmanaged,
 				ManagedWorkspaces: managed,
+				Priority:          rc.Priority,
 			})
 		}
 		modes = append(modes, compiled)
