@@ -50,7 +50,28 @@ func (d *socketDispatcher) DispatchBatch(commands [][]string) error {
 	if len(lines) == 0 {
 		return nil
 	}
-	payload := strings.Join(lines, "\n") + "\n"
+
+	// Hyprland batches expect multi-dispatch payloads to be framed by
+	// explicit begin/commit markers. For single-dispatch payloads we keep
+	// the historic behavior to avoid unnecessary framing.
+	var payload string
+	if len(lines) == 1 {
+		payload = lines[0] + "\n"
+	} else {
+		var b strings.Builder
+		totalLen := len("begin\n") + len("commit\n")
+		for _, line := range lines {
+			totalLen += len(line) + 1 // +1 for newline separator
+		}
+		b.Grow(totalLen)
+		b.WriteString("begin\n")
+		for _, line := range lines {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+		b.WriteString("commit\n")
+		payload = b.String()
+	}
 	if _, err := conn.Write([]byte(payload)); err != nil {
 		return fmt.Errorf("write dispatch payload: %w", err)
 	}
