@@ -231,8 +231,9 @@ func TestSidecarDockPlanFocusPolicies(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan failed: %v", err)
 		}
-		if got, want := plan.Commands[len(plan.Commands)-1], []string{"focuswindow", "address:0xside"}; !equalCommand(got, want) {
-			t.Fatalf("expected final focus on sidecar, got %v", got)
+		focuses := focusTargets(plan)
+		if len(focuses) != 1 || focuses[0] != "address:0xside" {
+			t.Fatalf("expected a single focus on sidecar, got %v", focuses)
 		}
 	})
 
@@ -241,8 +242,15 @@ func TestSidecarDockPlanFocusPolicies(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan failed: %v", err)
 		}
-		if got, want := plan.Commands[len(plan.Commands)-1], []string{"focuswindow", "address:0xhost"}; !equalCommand(got, want) {
-			t.Fatalf("expected final focus on host, got %v", got)
+		focuses := focusTargets(plan)
+		if len(focuses) != 2 {
+			t.Fatalf("expected two focus commands, got %v", focuses)
+		}
+		if focuses[0] != "address:0xside" || focuses[1] != "address:0xhost" {
+			t.Fatalf("expected focus sequence sidecar→host, got %v", focuses)
+		}
+		if last := plan.Commands[len(plan.Commands)-1]; !equalCommand(last, []string{"focuswindow", "address:0xhost"}) {
+			t.Fatalf("expected final focus command to target host, got %v", last)
 		}
 	})
 
@@ -254,10 +262,78 @@ func TestSidecarDockPlanFocusPolicies(t *testing.T) {
 		if len(plan.Commands) < 4 {
 			t.Fatalf("expected move/resize commands, got %d", len(plan.Commands))
 		}
-		if last := plan.Commands[len(plan.Commands)-1]; equalCommand(last, []string{"focuswindow", "address:0xhost"}) || equalCommand(last, []string{"focuswindow", "address:0xside"}) {
-			t.Fatalf("expected no trailing focus command, got %v", last)
+		focuses := focusTargets(plan)
+		if len(focuses) != 1 || focuses[0] != "address:0xside" {
+			t.Fatalf("expected only initial focus on sidecar, got %v", focuses)
+		}
+		if last := plan.Commands[len(plan.Commands)-1]; last[0] == "focuswindow" {
+			t.Fatalf("expected final command to be non-focus, got %v", last)
 		}
 	})
+}
+
+func TestSidecarDockPlanSkipsFocusWhenTargetAlreadyActive(t *testing.T) {
+	monitorRect := layout.Rect{X: 0, Y: 0, Width: 1600, Height: 900}
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xside",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+			Geometry:    layout.Rect{X: 200, Y: 150, Width: 600, Height: 500},
+			Focused:     true,
+		}, {
+			Address:     "0xhost",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+		}},
+		Workspaces:          []state.Workspace{{ID: 1, MonitorName: "DP-1"}},
+		Monitors:            []state.Monitor{{Name: "DP-1", Rectangle: monitorRect}},
+		ActiveClientAddress: "0xside",
+	}
+
+	ctx := ActionContext{
+		World:           world,
+		RuleName:        "sidecar",
+		TolerancePx:     1,
+		Gaps:            layout.Gaps{},
+		MonitorReserved: map[string]layout.Insets{},
+	}
+
+	mkAction := func(focus string) *SidecarDockAction {
+		return &SidecarDockAction{
+			WorkspaceID:  1,
+			Side:         "right",
+			WidthPercent: 25,
+			Match: func(c state.Client) bool {
+				return c.Address == "0xside"
+			},
+			FocusAfter: focus,
+		}
+	}
+
+	for _, focus := range []string{"sidecar", "host", "none"} {
+		t.Run(focus, func(t *testing.T) {
+			action := mkAction(focus)
+			plan, err := action.Plan(ctx)
+			if err != nil {
+				t.Fatalf("plan failed: %v", err)
+			}
+			if len(plan.Commands) < 3 {
+				t.Fatalf("expected plan to include placement commands, got %d", len(plan.Commands))
+			}
+			if focuses := focusTargets(plan); len(focuses) != 0 {
+				t.Fatalf("expected no focus commands when target already active, got %v", focuses)
+			}
+
+			secondPlan, err := action.Plan(ctx)
+			if err != nil {
+				t.Fatalf("second plan failed: %v", err)
+			}
+			if focuses := focusTargets(secondPlan); len(focuses) != 0 {
+				t.Fatalf("expected no focus commands on repeated plan, got %v", focuses)
+			}
+		})
+	}
 }
 
 func equalCommand(got, want []string) bool {
@@ -270,6 +346,16 @@ func equalCommand(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func focusTargets(plan layout.Plan) []string {
+	var targets []string
+	for _, cmd := range plan.Commands {
+		if len(cmd) >= 2 && cmd[0] == "focuswindow" {
+			targets = append(targets, cmd[1])
+		}
+	}
+	return targets
 }
 
 func TestFullscreenPlanSkipsOnUnmanagedWorkspace(t *testing.T) {

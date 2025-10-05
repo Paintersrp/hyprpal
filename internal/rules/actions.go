@@ -335,9 +335,13 @@ func (a *SidecarDockAction) Plan(ctx ActionContext) (layout.Plan, error) {
 		return layout.Plan{}, nil
 	}
 	var plan layout.Plan
+	currentFocus := ctx.World.ActiveClientAddress
 	addr := fmt.Sprintf("address:%s", target.Address)
 	plan.Add("setfloatingaddress", addr, "1")
-	plan.Add("focuswindow", addr)
+	if target.Address != currentFocus {
+		plan.Add("focuswindow", addr)
+		currentFocus = target.Address
+	}
 	plan.Add("movewindowpixel", "exact", fmt.Sprintf("%d", int(dock.X)), fmt.Sprintf("%d", int(dock.Y)))
 	plan.Add("resizewindowpixel", "exact", fmt.Sprintf("%d", int(dock.Width)), fmt.Sprintf("%d", int(dock.Height)))
 
@@ -348,11 +352,15 @@ func (a *SidecarDockAction) Plan(ctx ActionContext) (layout.Plan, error) {
 
 	switch a.FocusAfter {
 	case "host":
-		if hostAddress != "" {
+		if hostAddress != "" && hostAddress != currentFocus {
 			plan.Merge(layout.Focus(hostAddress))
+			currentFocus = hostAddress
 		}
 	case "sidecar":
-		plan.Merge(layout.Focus(target.Address))
+		if target.Address != currentFocus {
+			plan.Merge(layout.Focus(target.Address))
+			currentFocus = target.Address
+		}
 	case "none":
 		// leave focus as-is
 	}
