@@ -489,6 +489,16 @@ func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, erro
 			return false, removeErr
 		}
 		return changed, nil
+	case "windowtitle":
+		address, title, err := parseWindowTitlePayload(ev.Payload)
+		if err != nil {
+			return false, err
+		}
+		changed, setErr := world.SetClientTitle(address, title)
+		if setErr != nil {
+			return false, setErr
+		}
+		return changed, nil
 	default:
 		return false, nil
 	}
@@ -512,6 +522,18 @@ func parseOpenWindowPayload(payload string) (state.Client, error) {
 		client.Title = parts[3]
 	}
 	return client, nil
+}
+
+func parseWindowTitlePayload(payload string) (string, string, error) {
+	parts := splitPayload(payload, 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid windowtitle payload %q", payload)
+	}
+	address := parts[0]
+	if address == "" {
+		return "", "", fmt.Errorf("windowtitle missing address")
+	}
+	return address, parts[1], nil
 }
 
 func parseMoveWindowPayload(payload string) (string, int, error) {
@@ -953,7 +975,7 @@ func executionSignature(ruleKey string, plan layout.Plan) string {
 
 func (e *Engine) isInteresting(kind string) bool {
 	switch kind {
-	case "openwindow", "closewindow", "activewindow", "workspace", "movewindow", "monitorremoved", "monitoradded":
+	case "openwindow", "closewindow", "activewindow", "workspace", "movewindow", "monitorremoved", "monitoradded", "windowtitle":
 		return true
 	default:
 		return false

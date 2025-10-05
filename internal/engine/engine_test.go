@@ -849,6 +849,102 @@ func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 	}
 }
 
+func TestApplyEventWindowTitleEvaluatesIncrementally(t *testing.T) {
+	ctx := context.Background()
+	hypr := &fakeHyprctl{
+		clients: []state.Client{{
+			Address:     "0xabc",
+			Class:       "Terminal",
+			Title:       "Old Title",
+			WorkspaceID: 1,
+			MonitorName: "HDMI-A-1",
+		}},
+		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1", Windows: 1}},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+		activeClient:    "0xabc",
+	}
+	plan := layout.Plan{}
+	plan.Add("focuswindow", "address:0xabc")
+	const newTitle = "Updated Title"
+	rule := rules.Rule{
+		Name: "title-updated",
+		When: func(ctx rules.EvalContext) bool {
+			for _, c := range ctx.World.Clients {
+				if c.Address == "0xabc" && c.Title == newTitle {
+					return true
+				}
+			}
+			return false
+		},
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	logger := util.NewLogger(util.LevelInfo)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(ctx); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 0 {
+		t.Fatalf("expected no dispatch before windowtitle, got %d", len(hypr.dispatched))
+	}
+
+	clientsCalls := hypr.listClientsCalls
+	workspacesCalls := hypr.listWorkspacesCalls
+	monitorsCalls := hypr.listMonitorsCalls
+	activeWorkspaceCalls := hypr.activeWorkspaceCalls
+	activeClientCalls := hypr.activeClientCalls
+
+	hypr.dispatched = nil
+	event := ipc.Event{Kind: "windowtitle", Payload: "0xabc," + newTitle}
+	if err := eng.applyEvent(ctx, event); err != nil {
+		t.Fatalf("applyEvent returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch after windowtitle, got %d", len(hypr.dispatched))
+	}
+	if hypr.listClientsCalls != clientsCalls || hypr.listWorkspacesCalls != workspacesCalls ||
+		hypr.listMonitorsCalls != monitorsCalls || hypr.activeWorkspaceCalls != activeWorkspaceCalls ||
+		hypr.activeClientCalls != activeClientCalls {
+		t.Fatalf("unexpected datasource calls after windowtitle: %+v", map[string]int{
+			"clients":         hypr.listClientsCalls - clientsCalls,
+			"workspaces":      hypr.listWorkspacesCalls - workspacesCalls,
+			"monitors":        hypr.listMonitorsCalls - monitorsCalls,
+			"activeWorkspace": hypr.activeWorkspaceCalls - activeWorkspaceCalls,
+			"activeClient":    hypr.activeClientCalls - activeClientCalls,
+		})
+	}
+
+	world := eng.LastWorld()
+	if world == nil {
+		t.Fatalf("expected cached world after windowtitle")
+	}
+	found := false
+	for _, c := range world.Clients {
+		if c.Address == "0xabc" {
+			found = true
+			if c.Title != newTitle {
+				t.Fatalf("expected updated title %q, got %q", newTitle, c.Title)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected client 0xabc in cached world")
+	}
+
+	eng.SetRedactTitles(true)
+	redactedWorld := eng.LastWorld()
+	if redactedWorld == nil {
+		t.Fatalf("expected redacted world snapshot")
+	}
+	for _, c := range redactedWorld.Clients {
+		if c.Address == "0xabc" && c.Title != redactedTitle {
+			t.Fatalf("expected redacted title, got %q", c.Title)
+		}
+	}
+}
+
 func TestApplyEventCloseWindowEvaluatesIncrementally(t *testing.T) {
 	ctx := context.Background()
 	hypr := &fakeHyprctl{
