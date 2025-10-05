@@ -2,15 +2,17 @@ BIN_DIR=bin
 HYPRPAL_BIN=$(BIN_DIR)/hyprpal
 HSCTL_BIN=$(BIN_DIR)/hsctl
 SMOKE_BIN=$(BIN_DIR)/smoke
+BENCH_BIN=$(BIN_DIR)/bench
 INSTALL_DIR?=$(HOME)/.local/bin
 
-.PHONY: build run tui smoke install service lint test
+.PHONY: build run tui smoke bench install service lint test
 
 build:
         mkdir -p $(BIN_DIR)
         go build -o $(HYPRPAL_BIN) ./cmd/hyprpal
         go build -o $(HSCTL_BIN) ./cmd/hsctl
         go build -o $(SMOKE_BIN) ./cmd/smoke
+        go build -o $(BENCH_BIN) ./cmd/bench
 
 run:
         go run ./cmd/hyprpal --config configs/example.yaml
@@ -21,9 +23,12 @@ tui:
 smoke:
         go run ./cmd/smoke --config configs/example.yaml
 
+bench:
+        go run ./cmd/bench --config configs/example.yaml
+
 install:
         mkdir -p $(INSTALL_DIR)
-        GOBIN=$(INSTALL_DIR) go install ./cmd/hyprpal ./cmd/hsctl ./cmd/smoke
+        GOBIN=$(INSTALL_DIR) go install ./cmd/hyprpal ./cmd/hsctl ./cmd/smoke ./cmd/bench
 
 service:
 	systemctl --user daemon-reload

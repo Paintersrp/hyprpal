@@ -275,6 +275,13 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 }
 
+// ApplyEvent processes a single Hyprland event against the cached world state.
+// It performs incremental updates when possible and falls back to a full
+// reconcile when the event cannot be handled incrementally.
+func (e *Engine) ApplyEvent(ctx context.Context, ev ipc.Event) error {
+	return e.applyEvent(ctx, ev)
+}
+
 func (e *Engine) newTicker() ticker {
 	if e.tickerFactory != nil {
 		return e.tickerFactory()

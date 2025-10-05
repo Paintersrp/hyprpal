@@ -81,6 +81,36 @@ go run ./cmd/smoke --config ~/.config/hyprpal/config.yaml --mode Coding --explai
 
 The `--explain` flag (enabled by default) annotates each dispatch with its `mode:rule` source, mirroring `hsctl plan --explain`. Predicate traces are also printed so you can understand why a rule matched or skipped.
 
+## `bench` engine replay harness
+
+`cmd/bench` replays a captured or synthetic Hyprland event stream through the engine so you can measure incremental-apply latency, dispatch volume, and allocation behaviour without relying on a live compositor. It uses the regular configuration loader plus a fake Hyprland data source derived from the engine unit tests.
+
+Run the harness against the default synthetic fixture (a Coding workspace with dockable comms windows) or point it at your own capture:
+
+```bash
+# Replay the default synthetic stream 25 times
+go run ./cmd/bench --iterations 25 --config configs/example.yaml
+
+# Replay a custom JSON fixture with CPU/heap profiles
+go run ./cmd/bench --config ~/.config/hyprpal/config.yaml \
+  --fixture fixtures/coding.json --cpu-profile bench.cpu --mem-profile bench.mem
+```
+
+The fixture supports two formats:
+
+- **JSON** – provide world snapshots plus an ordered list of events. Keys mirror the internal types (`clients`, `workspaces`, `monitors`, `activeWorkspace`, `activeClient`). Each event object accepts `kind`, `payload`, and an optional `delay` duration string.
+- **Event log** – plain text lines matching Hyprland's `kind>>payload` stream. When this format is used, the harness falls back to the built-in synthetic world snapshot and replaces only the event list.
+
+Useful flags:
+
+- `--iterations` – number of times to replay the stream (default `10`).
+- `--mode` – override the mode selected before the first reconcile.
+- `--respect-delays` – sleep for any `delay` values encoded in the fixture events.
+- `--cpu-profile` / `--mem-profile` – emit pprof-compatible profile files for deeper analysis.
+- `--log-level` – adjust engine logging verbosity during the run (defaults to `warn`).
+
+The harness prints summary statistics after replaying the stream: total dispatches, latency percentiles (min/avg/p50/p95/max in milliseconds), and allocation counts/bytes per event. Use the Makefile target (`make bench`) for a quick replay of the synthetic fixture with the repository's example configuration.
+
 ## Configuration
 
 Configuration is YAML with modes, rules, and actions. Start by copying a preset from [`examples/`](./examples/)—each directory includes a `config.yaml` you can place at `~/.config/hyprpal/config.yaml` and a README describing its assumptions. A condensed example:
@@ -170,6 +200,7 @@ Pair `--log-level=trace` with `--dry-run` to audition rules without moving windo
 - `make build` – compile to `bin/hyprpal`.
 - `make run` – run the daemon against `configs/example.yaml`.
 - `make smoke` – run the smoke CLI to inspect the current world snapshot against `configs/example.yaml`.
+- `make bench` – replay the synthetic fixture through the engine using `configs/example.yaml`.
 - `make install` – install the binary to `~/.local/bin` (override with `INSTALL_DIR=...`).
 - `make service` – reload and start the user service.
 - `make lint` – run `go vet` plus a `gofmt` check.
