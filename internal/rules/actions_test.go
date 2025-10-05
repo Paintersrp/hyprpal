@@ -73,6 +73,39 @@ func TestParseClientMatcherProfileRegression(t *testing.T) {
 	}
 }
 
+func TestParseClientMatcherProfileConflictErrors(t *testing.T) {
+	profiles := map[string]config.MatcherConfig{
+		"comms": {AnyClass: []string{"Slack"}},
+	}
+
+	cases := map[string]map[string]interface{}{
+		"withAllOfProfiles": {
+			"profile":       "comms",
+			"allOfProfiles": []interface{}{"comms"},
+		},
+		"withAnyOfProfiles": {
+			"profile":       "comms",
+			"anyOfProfiles": []interface{}{"comms"},
+		},
+		"withClass": {
+			"profile": "comms",
+			"class":   "Slack",
+		},
+	}
+
+	for name, match := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseClientMatcher(match, profiles)
+			if err == nil {
+				t.Fatalf("expected error for conflicting selectors")
+			}
+			if !strings.Contains(err.Error(), "match.profile cannot be combined") {
+				t.Fatalf("expected descriptive profile conflict error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestParseClientMatcherAllOfProfilesErrors(t *testing.T) {
 	profiles := map[string]config.MatcherConfig{}
 
