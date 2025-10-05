@@ -118,6 +118,97 @@ func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 	}
 }
 
+func TestReconcileSkipsUnmanagedWorkspaceRule(t *testing.T) {
+	hypr := &fakeHyprctl{
+		clients: []state.Client{{
+			Address:     "addr-1",
+			WorkspaceID: 2,
+			MonitorName: "HDMI-A-1",
+		}},
+		workspaces: []state.Workspace{
+			{ID: 1, Name: "1", MonitorName: "HDMI-A-1"},
+			{ID: 2, Name: "2", MonitorName: "HDMI-A-1"},
+		},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 2,
+		activeClient:    "addr-1",
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	rule := rules.Rule{
+		Name: "fullscreen-unmanaged",
+		When: func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{
+			&rules.FullscreenAction{Target: "active"},
+		},
+		ManagedWorkspaces: map[int]struct{}{1: {}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 0 {
+		t.Fatalf("expected no dispatches, got %d", len(hypr.dispatched))
+	}
+	want := "rule fullscreen-unmanaged skipped (workspace 2 unmanaged)"
+	if !strings.Contains(logs.String(), want) {
+		t.Fatalf("expected log %q, got %q", want, logs.String())
+	}
+}
+
+func TestReconcileMutatesUnmanagedWhenEnabled(t *testing.T) {
+	hypr := &fakeHyprctl{
+		clients: []state.Client{{
+			Address:        "addr-1",
+			WorkspaceID:    2,
+			MonitorName:    "HDMI-A-1",
+			FullscreenMode: 0,
+		}},
+		workspaces: []state.Workspace{
+			{ID: 1, Name: "1", MonitorName: "HDMI-A-1"},
+			{ID: 2, Name: "2", MonitorName: "HDMI-A-1"},
+		},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 2,
+		activeClient:    "addr-1",
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	rule := rules.Rule{
+		Name: "fullscreen-unmanaged",
+		When: func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{
+			&rules.FullscreenAction{Target: "active"},
+		},
+		ManagedWorkspaces: map[int]struct{}{1: {}},
+		MutateUnmanaged:   true,
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch, got %d", len(hypr.dispatched))
+	}
+	wantCommand := []string{"fullscreen", "address:addr-1", "1"}
+	got := hypr.dispatched[0]
+	if len(got) != len(wantCommand) {
+		t.Fatalf("unexpected dispatch length, want %d got %d: %v", len(wantCommand), len(got), got)
+	}
+	for i := range wantCommand {
+		if got[i] != wantCommand[i] {
+			t.Fatalf("unexpected dispatch at %d, want %q got %q (full: %v)", i, wantCommand[i], got[i], got)
+		}
+	}
+	if strings.Contains(logs.String(), "workspace 2 unmanaged") {
+		t.Fatalf("unexpected unmanaged workspace log: %s", logs.String())
+	}
+}
+
 func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
 	hypr := &fakeHyprctl{
 		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
