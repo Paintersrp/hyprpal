@@ -17,14 +17,14 @@ type ActionContext struct {
 	Logger            *util.Logger
 	RuleName          string
 	ManagedWorkspaces map[int]struct{}
-	AllowUnmanaged    bool
+	MutateUnmanaged   bool
 	Gaps              layout.Gaps
 	TolerancePx       float64
 	MonitorReserved   map[string]layout.Insets
 }
 
 func (ctx ActionContext) workspaceAllowed(id int) bool {
-	if ctx.AllowUnmanaged {
+	if ctx.MutateUnmanaged {
 		return true
 	}
 	if len(ctx.ManagedWorkspaces) == 0 {

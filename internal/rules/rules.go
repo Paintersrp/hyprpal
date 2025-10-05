@@ -14,7 +14,7 @@ type Rule struct {
 	Tracer            *PredicateTracer
 	Actions           []Action
 	Debounce          time.Duration
-	AllowUnmanaged    bool
+	MutateUnmanaged   bool
 	ManagedWorkspaces map[int]struct{}
 }
 
@@ -52,7 +52,7 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 				Tracer:            tracer,
 				Actions:           acts,
 				Debounce:          debounce,
-				AllowUnmanaged:    rc.AllowUnmanaged,
+				MutateUnmanaged:   rc.MutateUnmanaged,
 				ManagedWorkspaces: managed,
 			})
 		}

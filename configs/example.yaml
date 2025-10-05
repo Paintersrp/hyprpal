@@ -46,7 +46,7 @@ modes:
             - mode: Coding
             - workspace.id: 7
             - app.class: Figma
-        allowUnmanaged: true # opt this rule into unmanaged workspace 7
+        mutateUnmanaged: true # opt this rule into unmanaged workspace 7
         actions:
           - type: layout.sidecarDock
             params:
@@ -60,7 +60,7 @@ modes:
       - name: Fullscreen active game
         when:
           mode: Gaming
-        allowUnmanaged: true # let fullscreen apply on any workspace
+        mutateUnmanaged: true # let fullscreen apply on any workspace
         actions:
           - type: layout.fullscreen
             params:

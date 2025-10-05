@@ -231,7 +231,7 @@ func TestFullscreenPlanAllowsWhenOptedIn(t *testing.T) {
 		Logger:            logger,
 		RuleName:          "fullscreen",
 		ManagedWorkspaces: map[int]struct{}{1: {}},
-		AllowUnmanaged:    true,
+		MutateUnmanaged:   true,
 		TolerancePx:       2,
 		Gaps:              layout.Gaps{},
 		MonitorReserved:   map[string]layout.Insets{},
@@ -245,7 +245,7 @@ func TestFullscreenPlanAllowsWhenOptedIn(t *testing.T) {
 		t.Fatalf("expected commands when unmanaged workspaces allowed")
 	}
 	if strings.Contains(buf.String(), "unmanaged") {
-		t.Fatalf("unexpected unmanaged log when allowUnmanaged is true: %q", buf.String())
+		t.Fatalf("unexpected unmanaged log when mutateUnmanaged is true: %q", buf.String())
 	}
 }
 
