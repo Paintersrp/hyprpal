@@ -117,11 +117,44 @@ type ModeConfig struct {
 
 // RuleConfig represents a declarative rule with predicates and actions.
 type RuleConfig struct {
-	Name           string          `yaml:"name"`
-	When           PredicateConfig `yaml:"when"`
-	Actions        []ActionConfig  `yaml:"actions"`
-	DebounceMs     int             `yaml:"debounceMs"`
-	AllowUnmanaged bool            `yaml:"allowUnmanaged"`
+	Name            string          `yaml:"name"`
+	When            PredicateConfig `yaml:"when"`
+	Actions         []ActionConfig  `yaml:"actions"`
+	DebounceMs      int             `yaml:"debounceMs"`
+	MutateUnmanaged bool            `yaml:"mutateUnmanaged"`
+}
+
+// UnmarshalYAML keeps backwards compatibility with the deprecated allowUnmanaged flag.
+func (r *RuleConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawRule struct {
+		Name            string          `yaml:"name"`
+		When            PredicateConfig `yaml:"when"`
+		Actions         []ActionConfig  `yaml:"actions"`
+		DebounceMs      int             `yaml:"debounceMs"`
+		MutateUnmanaged *bool           `yaml:"mutateUnmanaged"`
+		AllowUnmanaged  *bool           `yaml:"allowUnmanaged"`
+	}
+
+	var raw rawRule
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	r.Name = raw.Name
+	r.When = raw.When
+	r.Actions = raw.Actions
+	r.DebounceMs = raw.DebounceMs
+
+	switch {
+	case raw.MutateUnmanaged != nil:
+		r.MutateUnmanaged = *raw.MutateUnmanaged
+	case raw.AllowUnmanaged != nil:
+		r.MutateUnmanaged = *raw.AllowUnmanaged
+	default:
+		r.MutateUnmanaged = false
+	}
+
+	return nil
 }
 
 // PredicateConfig implements the simple predicate tree language.

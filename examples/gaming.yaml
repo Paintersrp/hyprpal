@@ -12,7 +12,7 @@ modes:
             - mode: Gaming
             - monitor.name: DP-1
             - workspace.id: 5
-        allowUnmanaged: true
+        mutateUnmanaged: true
         actions:
           - type: layout.fullscreen
             params:
@@ -20,7 +20,7 @@ modes:
       - name: Fullscreen popular launchers
         when:
           mode: Gaming
-        allowUnmanaged: true
+        mutateUnmanaged: true
         actions:
           - type: layout.fullscreen
             params:

@@ -445,7 +445,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				Logger:            e.logger,
 				RuleName:          rule.Name,
 				ManagedWorkspaces: rule.ManagedWorkspaces,
-				AllowUnmanaged:    rule.AllowUnmanaged,
+				MutateUnmanaged:   rule.MutateUnmanaged,
 				Gaps:              gaps,
 				TolerancePx:       tolerance,
 				MonitorReserved:   monitorInsets,

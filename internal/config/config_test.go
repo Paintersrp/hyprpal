@@ -146,3 +146,49 @@ func TestConfigUnmarshalToleranceAliases(t *testing.T) {
 		}
 	})
 }
+
+func TestRuleConfigUnmarshalMutateAlias(t *testing.T) {
+	t.Run("mutateUnmanaged", func(t *testing.T) {
+		data := []byte(`
+modes:
+  - name: Test
+    rules:
+      - name: Example
+        when:
+          mode: Test
+        mutateUnmanaged: true
+        actions:
+          - type: layout.fullscreen
+`)
+
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !cfg.Modes[0].Rules[0].MutateUnmanaged {
+			t.Fatalf("expected mutateUnmanaged to be true")
+		}
+	})
+
+	t.Run("allowUnmanagedLegacy", func(t *testing.T) {
+		data := []byte(`
+modes:
+  - name: Test
+    rules:
+      - name: Example
+        when:
+          mode: Test
+        allowUnmanaged: true
+        actions:
+          - type: layout.fullscreen
+`)
+
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !cfg.Modes[0].Rules[0].MutateUnmanaged {
+			t.Fatalf("expected legacy allowUnmanaged to populate mutateUnmanaged")
+		}
+	})
+}
