@@ -56,6 +56,12 @@ func BuildActions(cfgs []config.ActionConfig, profiles map[string]config.Matcher
 				return nil, fmt.Errorf("fullscreen: %w", err)
 			}
 			actions = append(actions, action)
+		case "layout.grid":
+			action, err := buildGrid(ac, profiles)
+			if err != nil {
+				return nil, fmt.Errorf("grid: %w", err)
+			}
+			actions = append(actions, action)
 		case "layout.ensureWorkspace", "client.pinToWorkspace":
 			// Not implemented in v0.1. Keep as no-op for compatibility.
 			actions = append(actions, NoopAction{})
@@ -84,6 +90,22 @@ type clientMatcher func(c state.Client) bool
 type FullscreenAction struct {
 	Target string
 	Match  clientMatcher
+}
+
+type GridLayoutAction struct {
+	WorkspaceID   int
+	ColumnWeights []float64
+	RowWeights    []float64
+	Slots         []GridSlotAction
+}
+
+type GridSlotAction struct {
+	Name    string
+	Row     int
+	Col     int
+	RowSpan int
+	ColSpan int
+	Match   clientMatcher
 }
 
 func buildSidecarDock(params map[string]interface{}, profiles map[string]config.MatcherConfig) (Action, error) {
@@ -126,6 +148,35 @@ func buildFullscreen(params map[string]interface{}, profiles map[string]config.M
 		return nil, err
 	}
 	return &FullscreenAction{Target: target, Match: matcher}, nil
+}
+
+func buildGrid(ac config.ActionConfig, profiles map[string]config.MatcherConfig) (Action, error) {
+	cfg, err := ac.GridLayout()
+	if err != nil {
+		return nil, err
+	}
+	slots := make([]GridSlotAction, 0, len(cfg.Slots))
+	for _, slotCfg := range cfg.Slots {
+		matcher, err := parseClientMatcher(slotCfg.Match, profiles)
+		if err != nil {
+			return nil, fmt.Errorf("slot %q: %w", slotCfg.Name, err)
+		}
+		slots = append(slots, GridSlotAction{
+			Name:    slotCfg.Name,
+			Row:     slotCfg.Row,
+			Col:     slotCfg.Col,
+			RowSpan: slotCfg.Span.Rows,
+			ColSpan: slotCfg.Span.Cols,
+			Match:   matcher,
+		})
+	}
+	action := &GridLayoutAction{
+		WorkspaceID:   cfg.Workspace,
+		ColumnWeights: append([]float64(nil), cfg.ColumnWeights...),
+		RowWeights:    append([]float64(nil), cfg.RowWeights...),
+		Slots:         slots,
+	}
+	return action, nil
 }
 
 func parseClientMatcher(v interface{}, profiles map[string]config.MatcherConfig) (clientMatcher, error) {
@@ -302,6 +353,71 @@ func (a *FullscreenAction) Plan(ctx ActionContext) (layout.Plan, error) {
 		return layout.Plan{}, nil
 	}
 	plan := layout.Fullscreen(client.Address, true)
+	return plan, nil
+}
+
+// Plan implements Action for GridLayoutAction.
+func (a *GridLayoutAction) Plan(ctx ActionContext) (layout.Plan, error) {
+	if !ctx.workspaceAllowed(a.WorkspaceID) {
+		if ctx.Logger != nil {
+			ctx.Logger.Infof("rule %s skipped (workspace %d unmanaged)", ctx.RuleName, a.WorkspaceID)
+		}
+		return layout.Plan{}, nil
+	}
+	monitor, err := ctx.World.MonitorForWorkspace(a.WorkspaceID)
+	if err != nil {
+		return layout.Plan{}, err
+	}
+	reserved := layout.Insets{}
+	if ctx.MonitorReserved != nil {
+		if insets, ok := ctx.MonitorReserved[monitor.Name]; ok {
+			reserved = insets
+		}
+	}
+	slotSpecs := make([]layout.GridSlotSpec, 0, len(a.Slots))
+	for _, slot := range a.Slots {
+		slotSpecs = append(slotSpecs, layout.GridSlotSpec{
+			Name:    slot.Name,
+			Row:     slot.Row,
+			Col:     slot.Col,
+			RowSpan: slot.RowSpan,
+			ColSpan: slot.ColSpan,
+		})
+	}
+	rects, err := layout.GridRects(monitor.Rectangle, ctx.Gaps, reserved, a.ColumnWeights, a.RowWeights, slotSpecs)
+	if err != nil {
+		return layout.Plan{}, err
+	}
+	used := make(map[string]struct{})
+	var plan layout.Plan
+	for _, slot := range a.Slots {
+		rect, ok := rects[slot.Name]
+		if !ok {
+			continue
+		}
+		var target *state.Client
+		for i := range ctx.World.Clients {
+			c := &ctx.World.Clients[i]
+			if c.WorkspaceID != a.WorkspaceID {
+				continue
+			}
+			if _, taken := used[c.Address]; taken {
+				continue
+			}
+			if slot.Match(*c) {
+				target = c
+				break
+			}
+		}
+		if target == nil {
+			continue
+		}
+		used[target.Address] = struct{}{}
+		if layout.ApproximatelyEqual(target.Geometry, rect, ctx.TolerancePx) {
+			continue
+		}
+		plan.Merge(layout.FloatAndPlace(target.Address, rect))
+	}
 	return plan, nil
 }
 

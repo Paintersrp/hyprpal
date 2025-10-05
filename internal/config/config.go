@@ -176,6 +176,240 @@ type ActionConfig struct {
 	Params map[string]interface{} `yaml:"params"`
 }
 
+// GridActionConfig represents the typed configuration for a layout.grid action.
+type GridActionConfig struct {
+	Workspace     int
+	ColumnWeights []float64
+	RowWeights    []float64
+	Slots         []GridSlotConfig
+}
+
+// GridSlotConfig defines a single named slot within a grid action.
+type GridSlotConfig struct {
+	Name  string
+	Row   int
+	Col   int
+	Span  GridSpanConfig
+	Match map[string]interface{}
+}
+
+// GridSpanConfig controls how many rows/columns a slot occupies.
+type GridSpanConfig struct {
+	Rows int
+	Cols int
+}
+
+// GridLayout parses the params for a layout.grid action into a strongly typed structure.
+func (a ActionConfig) GridLayout() (*GridActionConfig, error) {
+	if a.Type != "layout.grid" {
+		return nil, fmt.Errorf("action type %q is not layout.grid", a.Type)
+	}
+	workspaceVal, ok := a.Params["workspace"]
+	if !ok {
+		return nil, fmt.Errorf("layout.grid requires workspace")
+	}
+	workspace, err := intFromInterface(workspaceVal, "workspace")
+	if err != nil {
+		return nil, err
+	}
+	if workspace <= 0 {
+		return nil, fmt.Errorf("workspace must be positive, got %d", workspace)
+	}
+
+	cfg := &GridActionConfig{Workspace: workspace}
+
+	if weights, ok := a.Params["colWeights"]; ok {
+		vals, err := floatSliceFromInterface(weights, "colWeights")
+		if err != nil {
+			return nil, err
+		}
+		for i, w := range vals {
+			if w <= 0 {
+				return nil, fmt.Errorf("colWeights[%d] must be positive, got %v", i, w)
+			}
+		}
+		cfg.ColumnWeights = vals
+	}
+	if weights, ok := a.Params["rowWeights"]; ok {
+		vals, err := floatSliceFromInterface(weights, "rowWeights")
+		if err != nil {
+			return nil, err
+		}
+		for i, w := range vals {
+			if w <= 0 {
+				return nil, fmt.Errorf("rowWeights[%d] must be positive, got %v", i, w)
+			}
+		}
+		cfg.RowWeights = vals
+	}
+
+	rawSlots, ok := a.Params["slots"]
+	if !ok {
+		return nil, fmt.Errorf("layout.grid requires slots")
+	}
+	list, ok := rawSlots.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("slots must be a list")
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("slots must contain at least one entry")
+	}
+	cfg.Slots = make([]GridSlotConfig, 0, len(list))
+	seenNames := map[string]struct{}{}
+	for i, item := range list {
+		slotMap, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("slots[%d] must be a mapping", i)
+		}
+		nameVal, ok := slotMap["name"]
+		if !ok {
+			return nil, fmt.Errorf("slots[%d] missing name", i)
+		}
+		name, err := stringFromInterfaceValue(nameVal, fmt.Sprintf("slots[%d].name", i))
+		if err != nil {
+			return nil, err
+		}
+		if name == "" {
+			return nil, fmt.Errorf("slots[%d] name cannot be empty", i)
+		}
+		if _, exists := seenNames[name]; exists {
+			return nil, fmt.Errorf("duplicate slot name %q", name)
+		}
+		seenNames[name] = struct{}{}
+
+		rowVal, ok := slotMap["row"]
+		if !ok {
+			return nil, fmt.Errorf("slots[%q] missing row", name)
+		}
+		row, err := intFromInterface(rowVal, fmt.Sprintf("slots[%q].row", name))
+		if err != nil {
+			return nil, err
+		}
+		if row < 0 {
+			return nil, fmt.Errorf("slots[%q].row cannot be negative", name)
+		}
+
+		colVal, ok := slotMap["col"]
+		if !ok {
+			return nil, fmt.Errorf("slots[%q] missing col", name)
+		}
+		col, err := intFromInterface(colVal, fmt.Sprintf("slots[%q].col", name))
+		if err != nil {
+			return nil, err
+		}
+		if col < 0 {
+			return nil, fmt.Errorf("slots[%q].col cannot be negative", name)
+		}
+
+		slotCfg := GridSlotConfig{Name: name, Row: row, Col: col}
+
+		if spanVal, ok := slotMap["span"]; ok && spanVal != nil {
+			spanMap, ok := spanVal.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("slots[%q].span must be a mapping", name)
+			}
+			if rowsVal, ok := spanMap["rows"]; ok {
+				spanRows, err := intFromInterface(rowsVal, fmt.Sprintf("slots[%q].span.rows", name))
+				if err != nil {
+					return nil, err
+				}
+				if spanRows <= 0 {
+					return nil, fmt.Errorf("slots[%q].span.rows must be positive", name)
+				}
+				slotCfg.Span.Rows = spanRows
+			}
+			if colsVal, ok := spanMap["cols"]; ok {
+				spanCols, err := intFromInterface(colsVal, fmt.Sprintf("slots[%q].span.cols", name))
+				if err != nil {
+					return nil, err
+				}
+				if spanCols <= 0 {
+					return nil, fmt.Errorf("slots[%q].span.cols must be positive", name)
+				}
+				slotCfg.Span.Cols = spanCols
+			}
+		}
+		if slotCfg.Span.Rows == 0 {
+			slotCfg.Span.Rows = 1
+		}
+		if slotCfg.Span.Cols == 0 {
+			slotCfg.Span.Cols = 1
+		}
+
+		if matchVal, ok := slotMap["match"]; ok && matchVal != nil {
+			matchMap, ok := matchVal.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("slots[%q].match must be a mapping", name)
+			}
+			slotCfg.Match = matchMap
+		}
+
+		cfg.Slots = append(cfg.Slots, slotCfg)
+	}
+
+	return cfg, nil
+}
+
+func intFromInterface(v interface{}, field string) (int, error) {
+	switch t := v.(type) {
+	case int:
+		return t, nil
+	case int64:
+		return int(t), nil
+	case float64:
+		return int(t), nil
+	default:
+		return 0, fmt.Errorf("%s must be a number", field)
+	}
+}
+
+func floatSliceFromInterface(v interface{}, field string) ([]float64, error) {
+	switch list := v.(type) {
+	case []float64:
+		return append([]float64(nil), list...), nil
+	case []int:
+		result := make([]float64, len(list))
+		for i, item := range list {
+			result[i] = float64(item)
+		}
+		return result, nil
+	case []int64:
+		result := make([]float64, len(list))
+		for i, item := range list {
+			result[i] = float64(item)
+		}
+		return result, nil
+	case []interface{}:
+		result := make([]float64, len(list))
+		for i, item := range list {
+			switch t := item.(type) {
+			case float64:
+				result[i] = t
+			case int:
+				result[i] = float64(t)
+			case int64:
+				result[i] = float64(t)
+			default:
+				return nil, fmt.Errorf("%s[%d] must be a number", field, i)
+			}
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("%s must be a list", field)
+	}
+}
+
+func stringFromInterfaceValue(v interface{}, field string) (string, error) {
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", field)
+	}
+	if s == "" {
+		return "", fmt.Errorf("%s cannot be empty", field)
+	}
+	return s, nil
+}
+
 // Load reads and validates a configuration file.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -260,6 +494,29 @@ func (c *Config) Validate() error {
 
 func (c *Config) validateMatcherReferences(mode string, rule RuleConfig) error {
 	for _, action := range rule.Actions {
+		if action.Type == "layout.grid" {
+			gridCfg, err := action.GridLayout()
+			if err != nil {
+				return fmt.Errorf("rule %q in mode %q: %w", rule.Name, mode, err)
+			}
+			for _, slot := range gridCfg.Slots {
+				if slot.Match == nil {
+					continue
+				}
+				profileNameRaw, ok := slot.Match["profile"]
+				if !ok {
+					continue
+				}
+				profileName, err := stringFromInterfaceValue(profileNameRaw, fmt.Sprintf("rule %s in mode %s slot %s match.profile", rule.Name, mode, slot.Name))
+				if err != nil {
+					return err
+				}
+				if _, exists := c.Profiles[profileName]; !exists {
+					return fmt.Errorf("rule %q in mode %q slot %q references unknown profile %q", rule.Name, mode, slot.Name, profileName)
+				}
+			}
+			continue
+		}
 		matchVal, ok := action.Params["match"]
 		if !ok || matchVal == nil {
 			continue
@@ -272,9 +529,9 @@ func (c *Config) validateMatcherReferences(mode string, rule RuleConfig) error {
 		if !ok {
 			continue
 		}
-		profileName, ok := profileNameRaw.(string)
-		if !ok {
-			return fmt.Errorf("rule %q in mode %q: match.profile must be a string", rule.Name, mode)
+		profileName, err := stringFromInterfaceValue(profileNameRaw, fmt.Sprintf("rule %s in mode %s match.profile", rule.Name, mode))
+		if err != nil {
+			return err
 		}
 		if _, exists := c.Profiles[profileName]; !exists {
 			return fmt.Errorf("rule %q in mode %q references unknown profile %q", rule.Name, mode, profileName)
