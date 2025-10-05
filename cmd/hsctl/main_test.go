@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,13 +69,13 @@ modes:
 	if !strings.Contains(output, "Configuration has") {
 		t.Fatalf("expected aggregated error output, got %q", output)
 	}
-	if !strings.Contains(output, "managedWorkspaces[0]: must be positive, got 0") {
+	if !strings.Contains(output, fmt.Sprintf("%s: managedWorkspaces[0]: must be positive, got 0", path)) {
 		t.Fatalf("missing managed workspace error: %q", output)
 	}
-	if !strings.Contains(output, "manualReserved.DP-1: cannot include negative values") {
+	if !strings.Contains(output, fmt.Sprintf("%s: manualReserved.DP-1: cannot include negative values", path)) {
 		t.Fatalf("missing manualReserved error: %q", output)
 	}
-	if !strings.Contains(output, "modes[0].rules[0].actions: must define at least one action") {
+	if !strings.Contains(output, fmt.Sprintf("%s: modes[0].rules[0].actions: must define at least one action", path)) {
 		t.Fatalf("missing rule actions error: %q", output)
 	}
 }
