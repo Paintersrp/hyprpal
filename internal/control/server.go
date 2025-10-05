@@ -140,7 +140,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	case ActionModeGet:
 		s.handleModeGet(conn)
 	case ActionModeSet:
-		s.handleModeSet(conn, req.Params)
+		s.handleModeSet(ctx, conn, req.Params)
 	case ActionReload:
 		s.handleReload(conn)
 	case ActionPlan:
@@ -160,7 +160,7 @@ func (s *Server) handleModeGet(conn net.Conn) {
 	s.writeOK(conn, status)
 }
 
-func (s *Server) handleModeSet(conn net.Conn, params map[string]any) {
+func (s *Server) handleModeSet(ctx context.Context, conn net.Conn, params map[string]any) {
 	name, _ := params["name"].(string)
 	if name == "" {
 		s.writeError(conn, errors.New("missing mode name"))
@@ -168,6 +168,11 @@ func (s *Server) handleModeSet(conn net.Conn, params map[string]any) {
 	}
 	if err := s.engine.SetMode(name); err != nil {
 		s.writeError(conn, err)
+		return
+	}
+	if err := s.engine.Reconcile(ctx); err != nil {
+		s.logger.Errorf("reconcile after mode switch failed: %v", err)
+		s.writeError(conn, fmt.Errorf("reconcile after mode switch: %w", err))
 		return
 	}
 	s.writeOK(conn, nil)
