@@ -122,4 +122,27 @@ func TestConfigUnmarshalToleranceAliases(t *testing.T) {
 			t.Fatalf("expected legacy placementTolerancePx to populate TolerancePx, got %v", cfg.TolerancePx)
 		}
 	})
+
+	t.Run("defaultWhenAbsent", func(t *testing.T) {
+		var cfg Config
+		if err := yaml.Unmarshal([]byte(`{}`), &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		cfg.applyDefaults()
+		if cfg.TolerancePx != 2 {
+			t.Fatalf("expected default tolerancePx of 2, got %v", cfg.TolerancePx)
+		}
+	})
+
+	t.Run("explicitZeroPreserved", func(t *testing.T) {
+		data := []byte(`tolerancePx: 0`)
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		cfg.applyDefaults()
+		if cfg.TolerancePx != 0 {
+			t.Fatalf("expected explicit tolerancePx of 0 to be preserved, got %v", cfg.TolerancePx)
+		}
+	})
 }

@@ -18,6 +18,7 @@ type Config struct {
 	TolerancePx       float64                  `yaml:"tolerancePx"`
 	Profiles          MatcherProfiles          `yaml:"profiles"`
 	ManualReserved    map[string]layout.Insets `yaml:"manualReserved"`
+	toleranceSet      bool                     `yaml:"-"`
 }
 
 // UnmarshalYAML handles deprecated fields while decoding configuration files.
@@ -48,10 +49,13 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	switch {
 	case raw.TolerancePx != nil:
 		c.TolerancePx = *raw.TolerancePx
+		c.toleranceSet = true
 	case raw.LegacyTolerancePx != nil:
 		c.TolerancePx = *raw.LegacyTolerancePx
+		c.toleranceSet = true
 	default:
 		c.TolerancePx = 0
+		c.toleranceSet = false
 	}
 
 	return nil
@@ -157,8 +161,9 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	if c.TolerancePx == 0 {
+	if !c.toleranceSet {
 		c.TolerancePx = 2.0
+		c.toleranceSet = true
 	}
 }
 
