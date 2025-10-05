@@ -83,6 +83,7 @@ type SidecarDockAction struct {
 	Side         string
 	WidthPercent float64
 	Match        clientMatcher
+	FocusAfter   string
 }
 
 type clientMatcher func(c state.Client) bool
@@ -131,11 +132,28 @@ func buildSidecarDock(params map[string]interface{}, profiles map[string]config.
 	if width > 50 {
 		return nil, fmt.Errorf("widthPercent must be at most 50, got %v", width)
 	}
+	focus, _ := stringFrom(params, "focusAfter")
+	focus = strings.ToLower(focus)
+	if focus == "" {
+		focus = "sidecar"
+	}
+	switch focus {
+	case "sidecar", "host", "none":
+	default:
+		return nil, fmt.Errorf("focusAfter must be host, sidecar, or none, got %q", focus)
+	}
+
 	matcher, err := parseClientMatcher(params["match"], profiles)
 	if err != nil {
 		return nil, err
 	}
-	return &SidecarDockAction{WorkspaceID: workspace, Side: side, WidthPercent: width, Match: matcher}, nil
+	return &SidecarDockAction{
+		WorkspaceID:  workspace,
+		Side:         side,
+		WidthPercent: width,
+		Match:        matcher,
+		FocusAfter:   focus,
+	}, nil
 }
 
 func buildFullscreen(params map[string]interface{}, profiles map[string]config.MatcherConfig) (Action, error) {
@@ -316,7 +334,29 @@ func (a *SidecarDockAction) Plan(ctx ActionContext) (layout.Plan, error) {
 		}
 		return layout.Plan{}, nil
 	}
-	plan := layout.FloatAndPlace(target.Address, dock)
+	var plan layout.Plan
+	addr := fmt.Sprintf("address:%s", target.Address)
+	plan.Add("setfloatingaddress", addr, "1")
+	plan.Add("focuswindow", addr)
+	plan.Add("movewindowpixel", "exact", fmt.Sprintf("%d", int(dock.X)), fmt.Sprintf("%d", int(dock.Y)))
+	plan.Add("resizewindowpixel", "exact", fmt.Sprintf("%d", int(dock.Width)), fmt.Sprintf("%d", int(dock.Height)))
+
+	hostAddress := ctx.World.ActiveClientAddress
+	if hostAddress == target.Address {
+		hostAddress = ""
+	}
+
+	switch a.FocusAfter {
+	case "host":
+		if hostAddress != "" {
+			plan.Merge(layout.Focus(hostAddress))
+		}
+	case "sidecar":
+		plan.Merge(layout.Focus(target.Address))
+	case "none":
+		// leave focus as-is
+	}
+
 	return plan, nil
 }
 
