@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/config"
@@ -21,8 +22,15 @@ type Rule struct {
 
 // Mode aggregates rules under a named mode.
 type Mode struct {
-	Name  string
-	Rules []Rule
+	Name           string
+	Rules          []Rule
+	PriorityGroups []PriorityGroup
+}
+
+// PriorityGroup holds rules that share the same priority level.
+type PriorityGroup struct {
+	Priority int
+	Rules    []Rule
 }
 
 // BuildModes compiles configuration into executable rule sets.
@@ -58,7 +66,34 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 				Priority:          rc.Priority,
 			})
 		}
-		modes = append(modes, compiled)
+		modes = append(modes, NormalizeMode(compiled))
 	}
 	return modes, nil
+}
+
+// NormalizeMode sorts rules by priority (descending) while preserving the
+// original order for rules with the same priority, and builds the grouped view.
+func NormalizeMode(mode Mode) Mode {
+	if len(mode.Rules) == 0 {
+		mode.PriorityGroups = nil
+		return mode
+	}
+
+	sort.SliceStable(mode.Rules, func(i, j int) bool {
+		if mode.Rules[i].Priority == mode.Rules[j].Priority {
+			return false
+		}
+		return mode.Rules[i].Priority > mode.Rules[j].Priority
+	})
+
+	groups := make([]PriorityGroup, 0)
+	for _, rule := range mode.Rules {
+		if len(groups) == 0 || groups[len(groups)-1].Priority != rule.Priority {
+			groups = append(groups, PriorityGroup{Priority: rule.Priority})
+		}
+		idx := len(groups) - 1
+		groups[idx].Rules = append(groups[idx].Rules, rule)
+	}
+	mode.PriorityGroups = groups
+	return mode
 }
