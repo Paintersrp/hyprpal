@@ -409,7 +409,7 @@ func (e *Engine) applyEvent(ctx context.Context, ev ipc.Event) error {
 func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, error) {
 	switch ev.Kind {
 	case "openwindow":
-		client, err := parseOpenWindowPayload(ev.Payload)
+		client, workspaceName, err := parseOpenWindowPayload(ev.Payload)
 		if err != nil {
 			return false, err
 		}
@@ -421,6 +421,15 @@ func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, erro
 			if ws == nil {
 				return false, fmt.Errorf("workspace %d not found", client.WorkspaceID)
 			}
+			if client.MonitorName == "" {
+				client.MonitorName = ws.MonitorName
+			}
+		} else if workspaceName != "" {
+			ws := world.WorkspaceByName(workspaceName)
+			if ws == nil {
+				return false, fmt.Errorf("workspace %q not found", workspaceName)
+			}
+			client.WorkspaceID = ws.ID
 			if client.MonitorName == "" {
 				client.MonitorName = ws.MonitorName
 			}
@@ -445,9 +454,16 @@ func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, erro
 		changed := world.SetActiveClient(address)
 		return changed, nil
 	case "workspace":
-		id, monitorName, err := parseWorkspacePayload(ev.Payload)
+		id, monitorName, workspaceName, err := parseWorkspacePayload(ev.Payload)
 		if err != nil {
 			return false, err
+		}
+		if id == 0 && workspaceName != "" {
+			ws := world.WorkspaceByName(workspaceName)
+			if ws == nil {
+				return false, fmt.Errorf("workspace %q not found", workspaceName)
+			}
+			id = ws.ID
 		}
 		changed, err := world.SetActiveWorkspace(id)
 		if err != nil {
@@ -464,9 +480,16 @@ func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, erro
 		}
 		return changed, nil
 	case "movewindow":
-		address, workspaceID, err := parseMoveWindowPayload(ev.Payload)
+		address, workspaceID, workspaceName, err := parseMoveWindowPayload(ev.Payload)
 		if err != nil {
 			return false, err
+		}
+		if workspaceID == 0 && workspaceName != "" {
+			ws := world.WorkspaceByName(workspaceName)
+			if ws == nil {
+				return false, fmt.Errorf("workspace %q not found", workspaceName)
+			}
+			workspaceID = ws.ID
 		}
 		ws := world.WorkspaceByID(workspaceID)
 		if ws == nil {
@@ -510,24 +533,30 @@ func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, erro
 	}
 }
 
-func parseOpenWindowPayload(payload string) (state.Client, error) {
+func parseOpenWindowPayload(payload string) (state.Client, string, error) {
 	parts := splitPayload(payload, 4)
 	if len(parts) < 3 {
-		return state.Client{}, fmt.Errorf("invalid openwindow payload %q", payload)
+		return state.Client{}, "", fmt.Errorf("invalid openwindow payload %q", payload)
 	}
-	workspaceID, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return state.Client{}, fmt.Errorf("invalid workspace id %q: %w", parts[1], err)
+	if parts[1] == "" {
+		return state.Client{}, "", fmt.Errorf("openwindow missing workspace")
 	}
 	client := state.Client{
-		Address:     parts[0],
-		WorkspaceID: workspaceID,
-		Class:       parts[2],
+		Address: parts[0],
+		Class:   parts[2],
+	}
+	var workspaceName string
+	if parts[1] != "" {
+		if workspaceID, err := strconv.Atoi(parts[1]); err == nil {
+			client.WorkspaceID = workspaceID
+		} else {
+			workspaceName = parts[1]
+		}
 	}
 	if len(parts) == 4 {
 		client.Title = parts[3]
 	}
-	return client, nil
+	return client, workspaceName, nil
 }
 
 func parseWindowTitlePayload(payload string) (string, string, error) {
@@ -542,35 +571,45 @@ func parseWindowTitlePayload(payload string) (string, string, error) {
 	return address, parts[1], nil
 }
 
-func parseMoveWindowPayload(payload string) (string, int, error) {
+func parseMoveWindowPayload(payload string) (string, int, string, error) {
 	parts := splitPayload(payload, 2)
 	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid movewindow payload %q", payload)
+		return "", 0, "", fmt.Errorf("invalid movewindow payload %q", payload)
 	}
-	workspaceID, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid workspace id %q: %w", parts[1], err)
+	if parts[1] == "" {
+		return "", 0, "", fmt.Errorf("movewindow missing workspace")
 	}
-	return parts[0], workspaceID, nil
+	if parts[1] != "" {
+		if workspaceID, err := strconv.Atoi(parts[1]); err == nil {
+			return parts[0], workspaceID, "", nil
+		}
+	}
+	return parts[0], 0, parts[1], nil
 }
 
-func parseWorkspacePayload(payload string) (int, string, error) {
+func parseWorkspacePayload(payload string) (int, string, string, error) {
 	parts := splitPayload(payload, 2)
 	if len(parts) == 0 {
-		return 0, "", fmt.Errorf("invalid workspace payload %q", payload)
+		return 0, "", "", fmt.Errorf("invalid workspace payload %q", payload)
 	}
 	if len(parts) == 1 {
-		id, err := strconv.Atoi(parts[0])
-		if err != nil {
-			return 0, "", fmt.Errorf("invalid workspace id %q: %w", parts[0], err)
+		if parts[0] == "" {
+			return 0, "", "", fmt.Errorf("workspace missing identifier")
 		}
-		return id, "", nil
+		if parts[0] != "" {
+			if id, err := strconv.Atoi(parts[0]); err == nil {
+				return id, "", "", nil
+			}
+		}
+		return 0, "", parts[0], nil
 	}
-	id, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, "", fmt.Errorf("invalid workspace id %q: %w", parts[1], err)
+	if parts[1] == "" {
+		return 0, parts[0], "", fmt.Errorf("workspace missing identifier")
 	}
-	return id, parts[0], nil
+	if id, err := strconv.Atoi(parts[1]); err == nil {
+		return id, parts[0], "", nil
+	}
+	return 0, parts[0], parts[1], nil
 }
 
 func parseMonitorPayload(payload string) (int, string, error) {

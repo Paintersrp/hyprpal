@@ -139,6 +139,16 @@ func (w *World) WorkspaceByID(id int) *Workspace {
 	return nil
 }
 
+// WorkspaceByName finds workspace by name.
+func (w *World) WorkspaceByName(name string) *Workspace {
+	for i := range w.Workspaces {
+		if w.Workspaces[i].Name == name {
+			return &w.Workspaces[i]
+		}
+	}
+	return nil
+}
+
 // MonitorForWorkspace resolves the monitor owning the workspace ID.
 func (w *World) MonitorForWorkspace(id int) (*Monitor, error) {
 	ws := w.WorkspaceByID(id)
