@@ -5,28 +5,32 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/hyprpal/hyprpal/internal/layout"
 )
 
 // Config is the top-level configuration document.
 type Config struct {
-	ManagedWorkspaces []int           `yaml:"managedWorkspaces"`
-	Modes             []ModeConfig    `yaml:"modes"`
-	RedactTitles      bool            `yaml:"redactTitles"`
-	Gaps              Gaps            `yaml:"gaps"`
-	TolerancePx       float64         `yaml:"tolerancePx"`
-	Profiles          MatcherProfiles `yaml:"profiles"`
+	ManagedWorkspaces []int                    `yaml:"managedWorkspaces"`
+	Modes             []ModeConfig             `yaml:"modes"`
+	RedactTitles      bool                     `yaml:"redactTitles"`
+	Gaps              Gaps                     `yaml:"gaps"`
+	TolerancePx       float64                  `yaml:"tolerancePx"`
+	Profiles          MatcherProfiles          `yaml:"profiles"`
+	ManualReserved    map[string]layout.Insets `yaml:"manualReserved"`
 }
 
 // UnmarshalYAML handles deprecated fields while decoding configuration files.
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type rawConfig struct {
-		ManagedWorkspaces []int           `yaml:"managedWorkspaces"`
-		Modes             []ModeConfig    `yaml:"modes"`
-		RedactTitles      bool            `yaml:"redactTitles"`
-		Gaps              Gaps            `yaml:"gaps"`
-		TolerancePx       *float64        `yaml:"tolerancePx"`
-		LegacyTolerancePx *float64        `yaml:"placementTolerancePx"`
-		Profiles          MatcherProfiles `yaml:"profiles"`
+		ManagedWorkspaces []int                    `yaml:"managedWorkspaces"`
+		Modes             []ModeConfig             `yaml:"modes"`
+		RedactTitles      bool                     `yaml:"redactTitles"`
+		Gaps              Gaps                     `yaml:"gaps"`
+		TolerancePx       *float64                 `yaml:"tolerancePx"`
+		LegacyTolerancePx *float64                 `yaml:"placementTolerancePx"`
+		Profiles          MatcherProfiles          `yaml:"profiles"`
+		ManualReserved    map[string]layout.Insets `yaml:"manualReserved"`
 	}
 
 	var raw rawConfig
@@ -39,6 +43,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	c.RedactTitles = raw.RedactTitles
 	c.Gaps = raw.Gaps
 	c.Profiles = raw.Profiles
+	c.ManualReserved = raw.ManualReserved
 
 	switch {
 	case raw.TolerancePx != nil:
@@ -205,6 +210,11 @@ func (c *Config) Validate() error {
 			if err := c.validateMatcherReferences(m.Name, r); err != nil {
 				return err
 			}
+		}
+	}
+	for name, insets := range c.ManualReserved {
+		if insets.HasNegative() {
+			return fmt.Errorf("manualReserved entry %q cannot include negative values", name)
 		}
 	}
 	return nil

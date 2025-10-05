@@ -55,11 +55,11 @@ func TestSidecarDockPlanIdempotentLogs(t *testing.T) {
 		}},
 	}
 
-	_, dock := layout.SplitSidecar(world.Monitors[0].Rectangle, action.Side, action.WidthPercent, layout.Gaps{})
+	_, dock := layout.SplitSidecar(world.Monitors[0].Rectangle, action.Side, action.WidthPercent, layout.Gaps{}, layout.Insets{})
 
 	buf := &bytes.Buffer{}
 	logger := util.NewLoggerWithWriter(util.LevelInfo, buf)
-	ctx := ActionContext{World: world, Logger: logger, RuleName: "sidecar", TolerancePx: 2, Gaps: layout.Gaps{}}
+	ctx := ActionContext{World: world, Logger: logger, RuleName: "sidecar", TolerancePx: 2, Gaps: layout.Gaps{}, MonitorReserved: map[string]layout.Insets{}}
 
 	plan, err := action.Plan(ctx)
 	if err != nil {
@@ -115,6 +115,7 @@ func TestSidecarDockPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 		ManagedWorkspaces: map[int]struct{}{1: {}},
 		TolerancePx:       2,
 		Gaps:              layout.Gaps{},
+		MonitorReserved:   map[string]layout.Insets{},
 	}
 
 	plan, err := action.Plan(ctx)
@@ -126,6 +127,50 @@ func TestSidecarDockPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "workspace 5 unmanaged") {
 		t.Fatalf("expected unmanaged workspace log, got %q", buf.String())
+	}
+}
+
+func TestSidecarDockPlanRespectsReservedInsets(t *testing.T) {
+	action := &SidecarDockAction{
+		WorkspaceID:  3,
+		Side:         "left",
+		WidthPercent: 25,
+		Match:        func(state.Client) bool { return true },
+	}
+
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xabc",
+			WorkspaceID: 3,
+			MonitorName: "DP-1",
+			Geometry:    layout.Rect{X: 0, Y: 0, Width: 600, Height: 400},
+		}},
+		Workspaces: []state.Workspace{{ID: 3, MonitorName: "DP-1"}},
+		Monitors: []state.Monitor{{
+			Name:      "DP-1",
+			Rectangle: layout.Rect{X: 0, Y: 0, Width: 1200, Height: 800},
+		}},
+	}
+
+	reserved := layout.Insets{Left: 40, Top: 10, Bottom: 10}
+	ctx := ActionContext{
+		World:           world,
+		RuleName:        "sidecar",
+		TolerancePx:     1,
+		Gaps:            layout.Gaps{},
+		MonitorReserved: map[string]layout.Insets{"DP-1": reserved},
+	}
+
+	plan, err := action.Plan(ctx)
+	if err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+	if len(plan.Commands) == 0 {
+		t.Fatalf("expected commands when target must move")
+	}
+	_, dockRect := layout.SplitSidecar(world.Monitors[0].Rectangle, action.Side, action.WidthPercent, layout.Gaps{}, reserved)
+	if layout.ApproximatelyEqual(world.Clients[0].Geometry, dockRect, ctx.TolerancePx) {
+		t.Fatalf("expected reserved insets to change target rect")
 	}
 }
 
@@ -152,6 +197,7 @@ func TestFullscreenPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 		ManagedWorkspaces: map[int]struct{}{1: {}},
 		TolerancePx:       2,
 		Gaps:              layout.Gaps{},
+		MonitorReserved:   map[string]layout.Insets{},
 	}
 
 	plan, err := action.Plan(ctx)
@@ -188,6 +234,7 @@ func TestFullscreenPlanAllowsWhenOptedIn(t *testing.T) {
 		AllowUnmanaged:    true,
 		TolerancePx:       2,
 		Gaps:              layout.Gaps{},
+		MonitorReserved:   map[string]layout.Insets{},
 	}
 
 	plan, err := action.Plan(ctx)

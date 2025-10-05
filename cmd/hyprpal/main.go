@@ -81,7 +81,7 @@ func main() {
 	eng := engine.New(hypr, logger, modes, *dryRun, cfg.RedactTitles, layout.Gaps{
 		Inner: cfg.Gaps.Inner,
 		Outer: cfg.Gaps.Outer,
-	}, cfg.TolerancePx)
+	}, cfg.TolerancePx, cfg.ManualReserved)
 	if *startMode != "" {
 		if err := eng.SetMode(*startMode); err != nil {
 			logger.Warnf("failed to set mode %s: %v", *startMode, err)
@@ -107,6 +107,7 @@ func main() {
 			Inner: cfg.Gaps.Inner,
 			Outer: cfg.Gaps.Outer,
 		}, cfg.TolerancePx)
+		eng.SetManualReserved(cfg.ManualReserved)
 		if err := eng.Reconcile(ctx); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
