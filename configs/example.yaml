@@ -23,38 +23,47 @@ profiles:
     class: Figma
   fullscreenGames:
     titleRegex: "(Proton|Steam|Game)"
+  codingEditor:
+    class: code
+  codingTerminal:
+    anyClass: [Alacritty, kitty]
+  codingReference:
+    anyClass: [firefox, brave-browser]
 modes:
   - name: Coding
     rules:
-      - name: Dock comms on workspace 3
+      - name: Arrange coding grid on workspace 3
         when:
           all:
             - mode: Coding
             - workspace.id: 3
-            - apps.present: [Slack, discord]
         actions:
-          - type: layout.sidecarDock
+          - type: layout.grid
             params:
               workspace: 3
-              side: right
-              widthPercent: 25 # allowed range: 10-50
-              match:
-                profile: commsDock # reusable match profile defined above
-      - name: Float design review on workspace 7
-        when:
-          all:
-            - mode: Coding
-            - workspace.id: 7
-            - app.class: Figma
-        mutateUnmanaged: true # opt this rule into unmanaged workspace 7
-        actions:
-          - type: layout.sidecarDock
-            params:
-              workspace: 7
-              side: left
-              widthPercent: 30
-              match:
-                profile: designReview
+              # Give the primary column twice the weight of the secondary column
+              colWeights: [2, 1]
+              # Favor vertical space for the upper row while keeping room for reference docs
+              rowWeights: [3, 2]
+              slots:
+                - name: editor
+                  row: 0
+                  col: 0
+                  # Span both rows so the IDE owns the full-height primary column
+                  span:
+                    rows: 2
+                  match:
+                    profile: codingEditor
+                - name: terminal
+                  row: 0
+                  col: 1
+                  match:
+                    profile: codingTerminal
+                - name: reference
+                  row: 1
+                  col: 1
+                  match:
+                    profile: codingReference
   - name: Gaming
     rules:
       - name: Fullscreen active game
