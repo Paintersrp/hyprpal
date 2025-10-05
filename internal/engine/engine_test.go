@@ -128,7 +128,7 @@ func waitForCondition(t *testing.T, timeout time.Duration, condition func() bool
 
 func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 	hypr := &fakeHyprctl{
-		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		workspaces: []state.Workspace{{ID: 1, Name: "dev", MonitorName: "HDMI-A-1"}},
 		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
 	}
 	var logs bytes.Buffer
@@ -289,7 +289,7 @@ func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
 
 func TestEvaluateStopsAfterHigherPriorityMutations(t *testing.T) {
 	hypr := &fakeHyprctl{
-		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		workspaces:      []state.Workspace{{ID: 1, Name: "dev", MonitorName: "HDMI-A-1"}},
 		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
 		activeWorkspace: 1,
 	}
@@ -339,7 +339,7 @@ func TestEvaluateStopsAfterHigherPriorityMutations(t *testing.T) {
 
 func TestEvaluateContinuesWhenHigherPriorityNoOp(t *testing.T) {
 	hypr := &fakeHyprctl{
-		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		workspaces:      []state.Workspace{{ID: 1, Name: "dev", MonitorName: "HDMI-A-1"}},
 		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
 		activeWorkspace: 1,
 	}
@@ -752,7 +752,7 @@ func TestCombineMonitorInsetsFallsBackToHyprReserved(t *testing.T) {
 func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 	ctx := context.Background()
 	hypr := &fakeHyprctl{
-		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		workspaces:      []state.Workspace{{ID: 1, Name: "dev", MonitorName: "HDMI-A-1"}},
 		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
 		activeWorkspace: 1,
 	}
@@ -789,7 +789,7 @@ func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 	activeWorkspaceCalls := hypr.activeWorkspaceCalls
 	activeClientCalls := hypr.activeClientCalls
 
-	event := ipc.Event{Kind: "openwindow", Payload: "0xabc,1,Terminal,New Window"}
+	event := ipc.Event{Kind: "openwindow", Payload: "0xabc,dev,Terminal,New Window"}
 	if err := eng.applyEvent(ctx, event); err != nil {
 		t.Fatalf("applyEvent returned error: %v", err)
 	}
@@ -814,8 +814,8 @@ func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 	if got := world.Clients[0].Title; got != "New Window" {
 		t.Fatalf("expected cached title %q, got %q", "New Window", got)
 	}
-	if got := world.Workspaces[0].Windows; got != 1 {
-		t.Fatalf("expected workspace window count 1, got %d", got)
+	if ws := world.WorkspaceByID(1); ws == nil || ws.Windows != 1 {
+		t.Fatalf("expected workspace 1 window count 1, got %+v", ws)
 	}
 
 	hypr.dispatched = nil
@@ -823,7 +823,7 @@ func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 	expectedTitle = "Secret Window"
 	eng.SetRedactTitles(true)
 	clearCooldown(t, eng, key)
-	event = ipc.Event{Kind: "openwindow", Payload: "0xdef,1,Terminal,Secret Window"}
+	event = ipc.Event{Kind: "openwindow", Payload: "0xdef,dev,Terminal,Secret Window"}
 	if err := eng.applyEvent(ctx, event); err != nil {
 		t.Fatalf("applyEvent with redaction returned error: %v", err)
 	}
@@ -844,8 +844,154 @@ func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 			t.Fatalf("expected client %d title to be redacted, got %q", i, c.Title)
 		}
 	}
-	if got := world.Workspaces[0].Windows; got != 2 {
-		t.Fatalf("expected workspace window count 2, got %d", got)
+	if ws := world.WorkspaceByID(1); ws == nil || ws.Windows != 2 {
+		t.Fatalf("expected workspace 1 window count 2, got %+v", ws)
+	}
+}
+
+func TestApplyEventMoveWindowWithWorkspaceName(t *testing.T) {
+	ctx := context.Background()
+	hypr := &fakeHyprctl{
+		clients: []state.Client{{
+			Address:     "0xabc",
+			WorkspaceID: 1,
+			MonitorName: "HDMI-A-1",
+		}},
+		workspaces: []state.Workspace{
+			{ID: 1, Name: "dev", MonitorName: "HDMI-A-1", Windows: 1},
+			{ID: 2, Name: "web", MonitorName: "HDMI-A-1"},
+		},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+		activeClient:    "0xabc",
+	}
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:0xabc")
+	rule := rules.Rule{
+		Name: "moved-to-web",
+		When: func(ctx rules.EvalContext) bool {
+			for _, c := range ctx.World.Clients {
+				if c.Address == "0xabc" && c.WorkspaceID == 2 {
+					return true
+				}
+			}
+			return false
+		},
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	logger := util.NewLogger(util.LevelInfo)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(ctx); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 0 {
+		t.Fatalf("expected no initial dispatch, got %d", len(hypr.dispatched))
+	}
+
+	clientsCalls := hypr.listClientsCalls
+	workspacesCalls := hypr.listWorkspacesCalls
+	monitorsCalls := hypr.listMonitorsCalls
+	activeWorkspaceCalls := hypr.activeWorkspaceCalls
+	activeClientCalls := hypr.activeClientCalls
+
+	event := ipc.Event{Kind: "movewindow", Payload: "0xabc,web"}
+	if err := eng.applyEvent(ctx, event); err != nil {
+		t.Fatalf("applyEvent returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch after movewindow, got %d", len(hypr.dispatched))
+	}
+	if hypr.listClientsCalls != clientsCalls || hypr.listWorkspacesCalls != workspacesCalls ||
+		hypr.listMonitorsCalls != monitorsCalls || hypr.activeWorkspaceCalls != activeWorkspaceCalls ||
+		hypr.activeClientCalls != activeClientCalls {
+		t.Fatalf("unexpected datasource calls after movewindow: %+v", map[string]int{
+			"clients":         hypr.listClientsCalls - clientsCalls,
+			"workspaces":      hypr.listWorkspacesCalls - workspacesCalls,
+			"monitors":        hypr.listMonitorsCalls - monitorsCalls,
+			"activeWorkspace": hypr.activeWorkspaceCalls - activeWorkspaceCalls,
+			"activeClient":    hypr.activeClientCalls - activeClientCalls,
+		})
+	}
+	world := eng.LastWorld()
+	if world == nil {
+		t.Fatalf("expected cached world, got nil")
+	}
+	client := world.FindClient("0xabc")
+	if client == nil || client.WorkspaceID != 2 {
+		t.Fatalf("expected client moved to workspace 2, got %+v", client)
+	}
+	if ws := world.WorkspaceByID(1); ws == nil || ws.Windows != 0 {
+		t.Fatalf("expected workspace 1 window count 0, got %+v", ws)
+	}
+	if ws := world.WorkspaceByID(2); ws == nil || ws.Windows != 1 {
+		t.Fatalf("expected workspace 2 window count 1, got %+v", ws)
+	}
+}
+
+func TestApplyEventWorkspaceWithName(t *testing.T) {
+	ctx := context.Background()
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{
+			{ID: 1, Name: "dev", MonitorName: "HDMI-A-1"},
+			{ID: 2, Name: "web", MonitorName: "HDMI-A-1"},
+		},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+	}
+	var plan layout.Plan
+	plan.Add("focusworkspace", "2")
+	rule := rules.Rule{
+		Name: "switch-to-web",
+		When: func(ctx rules.EvalContext) bool {
+			return ctx.World.ActiveWorkspaceID == 2
+		},
+		Actions: []rules.Action{stubAction{plan: plan}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	logger := util.NewLogger(util.LevelInfo)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(ctx); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 0 {
+		t.Fatalf("expected no initial dispatch, got %d", len(hypr.dispatched))
+	}
+
+	workspacesCalls := hypr.listWorkspacesCalls
+	monitorsCalls := hypr.listMonitorsCalls
+	activeWorkspaceCalls := hypr.activeWorkspaceCalls
+
+	event := ipc.Event{Kind: "workspace", Payload: "HDMI-A-1,web"}
+	if err := eng.applyEvent(ctx, event); err != nil {
+		t.Fatalf("applyEvent returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 1 {
+		t.Fatalf("expected one dispatch after workspace event, got %d", len(hypr.dispatched))
+	}
+	if hypr.listWorkspacesCalls != workspacesCalls || hypr.listMonitorsCalls != monitorsCalls ||
+		hypr.activeWorkspaceCalls != activeWorkspaceCalls {
+		t.Fatalf("unexpected datasource calls after workspace event: %+v", map[string]int{
+			"workspaces":      hypr.listWorkspacesCalls - workspacesCalls,
+			"monitors":        hypr.listMonitorsCalls - monitorsCalls,
+			"activeWorkspace": hypr.activeWorkspaceCalls - activeWorkspaceCalls,
+		})
+	}
+	world := eng.LastWorld()
+	if world == nil {
+		t.Fatalf("expected cached world, got nil")
+	}
+	if world.ActiveWorkspaceID != 2 {
+		t.Fatalf("expected active workspace 2, got %d", world.ActiveWorkspaceID)
+	}
+	if ws := world.WorkspaceByID(2); ws == nil || ws.MonitorName != "HDMI-A-1" {
+		t.Fatalf("expected workspace 2 bound to HDMI-A-1, got %+v", ws)
+	}
+	mon := world.MonitorByName("HDMI-A-1")
+	if mon == nil || mon.ActiveWorkspaceID != 2 || mon.FocusedWorkspaceID != 2 {
+		t.Fatalf("expected monitor active workspace 2, got %+v", mon)
 	}
 }
 
