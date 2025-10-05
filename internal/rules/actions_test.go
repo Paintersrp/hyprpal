@@ -33,12 +33,24 @@ func TestBuildSidecarDockRejectsWideWidth(t *testing.T) {
 	}
 }
 
+func TestBuildSidecarDockRejectsInvalidFocusAfter(t *testing.T) {
+	_, err := buildSidecarDock(map[string]interface{}{
+		"workspace":  1,
+		"side":       "left",
+		"focusAfter": "later",
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "focusAfter") {
+		t.Fatalf("expected focusAfter validation error, got %v", err)
+	}
+}
+
 func TestSidecarDockPlanIdempotentLogs(t *testing.T) {
 	action := &SidecarDockAction{
 		WorkspaceID:  1,
 		Side:         "right",
 		WidthPercent: 25,
 		Match:        func(state.Client) bool { return true },
+		FocusAfter:   "sidecar",
 	}
 
 	world := &state.World{
@@ -90,6 +102,7 @@ func TestSidecarDockPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 		Side:         "right",
 		WidthPercent: 25,
 		Match:        func(state.Client) bool { return true },
+		FocusAfter:   "sidecar",
 	}
 
 	world := &state.World{
@@ -136,6 +149,7 @@ func TestSidecarDockPlanRespectsReservedInsets(t *testing.T) {
 		Side:         "left",
 		WidthPercent: 25,
 		Match:        func(state.Client) bool { return true },
+		FocusAfter:   "sidecar",
 	}
 
 	world := &state.World{
@@ -172,6 +186,90 @@ func TestSidecarDockPlanRespectsReservedInsets(t *testing.T) {
 	if layout.ApproximatelyEqual(world.Clients[0].Geometry, dockRect, ctx.TolerancePx) {
 		t.Fatalf("expected reserved insets to change target rect")
 	}
+}
+
+func TestSidecarDockPlanFocusPolicies(t *testing.T) {
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xside",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+			Geometry:    layout.Rect{X: 0, Y: 0, Width: 500, Height: 500},
+		}, {
+			Address:     "0xhost",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+			Geometry:    layout.Rect{X: 500, Y: 0, Width: 1100, Height: 500},
+			Focused:     true,
+		}},
+		Workspaces:          []state.Workspace{{ID: 1, MonitorName: "DP-1"}},
+		Monitors:            []state.Monitor{{Name: "DP-1", Rectangle: layout.Rect{X: 0, Y: 0, Width: 1600, Height: 900}}},
+		ActiveClientAddress: "0xhost",
+	}
+	ctx := ActionContext{
+		World:           world,
+		RuleName:        "sidecar",
+		TolerancePx:     1,
+		Gaps:            layout.Gaps{},
+		MonitorReserved: map[string]layout.Insets{},
+	}
+
+	mkAction := func(focus string) *SidecarDockAction {
+		return &SidecarDockAction{
+			WorkspaceID:  1,
+			Side:         "right",
+			WidthPercent: 25,
+			Match: func(c state.Client) bool {
+				return c.Address == "0xside"
+			},
+			FocusAfter: focus,
+		}
+	}
+
+	t.Run("sidecar", func(t *testing.T) {
+		plan, err := mkAction("sidecar").Plan(ctx)
+		if err != nil {
+			t.Fatalf("plan failed: %v", err)
+		}
+		if got, want := plan.Commands[len(plan.Commands)-1], []string{"focuswindow", "address:0xside"}; !equalCommand(got, want) {
+			t.Fatalf("expected final focus on sidecar, got %v", got)
+		}
+	})
+
+	t.Run("host", func(t *testing.T) {
+		plan, err := mkAction("host").Plan(ctx)
+		if err != nil {
+			t.Fatalf("plan failed: %v", err)
+		}
+		if got, want := plan.Commands[len(plan.Commands)-1], []string{"focuswindow", "address:0xhost"}; !equalCommand(got, want) {
+			t.Fatalf("expected final focus on host, got %v", got)
+		}
+	})
+
+	t.Run("none", func(t *testing.T) {
+		plan, err := mkAction("none").Plan(ctx)
+		if err != nil {
+			t.Fatalf("plan failed: %v", err)
+		}
+		if len(plan.Commands) < 4 {
+			t.Fatalf("expected move/resize commands, got %d", len(plan.Commands))
+		}
+		if last := plan.Commands[len(plan.Commands)-1]; equalCommand(last, []string{"focuswindow", "address:0xhost"}) || equalCommand(last, []string{"focuswindow", "address:0xside"}) {
+			t.Fatalf("expected no trailing focus command, got %v", last)
+		}
+	})
+}
+
+func equalCommand(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestFullscreenPlanSkipsOnUnmanagedWorkspace(t *testing.T) {

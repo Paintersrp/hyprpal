@@ -64,6 +64,21 @@ modes:
                   col: 1
                   match:
                     profile: codingReference
+      - name: Dock comms on workspace 3
+        when:
+          all:
+            - mode: Coding
+            - workspace.id: 3
+            - apps.present: [Slack, discord]
+        actions:
+          - type: layout.sidecarDock
+            params:
+              workspace: 3
+              side: right
+              widthPercent: 25
+              focusAfter: host # keep your editor focused after arranging the dock
+              match:
+                anyClass: [Slack, discord]
   - name: Gaming
     rules:
       - name: Fullscreen active game
