@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -74,6 +75,20 @@ func (d *socketDispatcher) DispatchBatch(commands [][]string) error {
 	}
 	if _, err := conn.Write([]byte(payload)); err != nil {
 		return fmt.Errorf("write dispatch payload: %w", err)
+	}
+	resp, err := io.ReadAll(conn)
+	if err != nil {
+		return fmt.Errorf("read dispatch response: %w", err)
+	}
+	reply := strings.TrimSpace(string(resp))
+	if reply == "" {
+		return fmt.Errorf("dispatch failed: empty response from Hyprland")
+	}
+	if strings.HasPrefix(reply, "err") {
+		return fmt.Errorf("dispatch failed: %s", reply)
+	}
+	if !strings.HasPrefix(reply, "ok") {
+		return fmt.Errorf("dispatch failed: unexpected response %q", reply)
 	}
 	return nil
 }
