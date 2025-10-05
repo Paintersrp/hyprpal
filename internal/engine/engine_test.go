@@ -43,6 +43,24 @@ func (s stubAction) Plan(rules.ActionContext) (layout.Plan, error) {
 	return s.plan, nil
 }
 
+type manualTicker struct {
+	ch chan time.Time
+}
+
+func newManualTicker() *manualTicker {
+	return &manualTicker{ch: make(chan time.Time, 1)}
+}
+
+func (t *manualTicker) C() <-chan time.Time {
+	return t.ch
+}
+
+func (t *manualTicker) Stop() {}
+
+func (t *manualTicker) Tick() {
+	t.ch <- time.Now()
+}
+
 func (f *fakeHyprctl) ListClients(context.Context) ([]state.Client, error) {
 	f.listClientsCalls++
 	return append([]state.Client(nil), f.clients...), nil
@@ -94,6 +112,18 @@ func clearCooldown(t *testing.T, eng *Engine, key string) {
 	eng.mu.Lock()
 	delete(eng.cooldown, key)
 	eng.mu.Unlock()
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %v", timeout)
 }
 
 func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
@@ -916,6 +946,57 @@ func parseTraceLine(t *testing.T, line string) (string, map[string]any) {
 		t.Fatalf("failed to unmarshal payload: %v (line: %q)", err, line)
 	}
 	return parts[0], payload
+}
+
+func TestRunTriggersPeriodicReconcile(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	eng := New(hypr, logger, nil, false, false, layout.Gaps{}, 2, nil)
+
+	tick := newManualTicker()
+	eng.tickerFactory = func() ticker { return tick }
+	eng.subscribe = func(ctx context.Context, logger *util.Logger) (<-chan ipc.Event, error) {
+		return make(chan ipc.Event), nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- eng.Run(ctx)
+	}()
+
+	waitForCondition(t, time.Second, func() bool {
+		return hypr.listClientsCalls > 0
+	})
+
+	initial := hypr.listClientsCalls
+
+	tick.Tick()
+
+	waitForCondition(t, time.Second, func() bool {
+		return hypr.listClientsCalls > initial
+	})
+
+	if !strings.Contains(logs.String(), "periodic reconcile tick") {
+		t.Fatalf("expected periodic reconcile log, got %q", logs.String())
+	}
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != context.Canceled {
+			t.Fatalf("expected context canceled error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("engine Run did not exit after cancel")
+	}
 }
 
 func payloadValue(t *testing.T, payload map[string]any, key string) any {
