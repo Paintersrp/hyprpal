@@ -62,6 +62,7 @@ type benchAllocationStats struct {
 type benchDispatchStats struct {
 	Total        int     `json:"total"`
 	PerIteration float64 `json:"perIteration"`
+	PerEvent     float64 `json:"perEvent"`
 }
 
 type benchSummary struct {
@@ -329,6 +330,7 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 		Dispatches: benchDispatchStats{
 			Total:        dispatches,
 			PerIteration: safeDivide(dispatches, iterations),
+			PerEvent:     safeDivide(dispatches, totalEvents),
 		},
 		Latency: benchLatencyStats{
 			Min:    toMillis(min),

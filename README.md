@@ -109,7 +109,7 @@ Useful flags:
 - `--cpu-profile` / `--mem-profile` – emit pprof-compatible profile files for deeper analysis.
 - `--log-level` – adjust engine logging verbosity during the run (defaults to `warn`).
 
-The harness prints summary statistics after replaying the stream: total dispatches, latency percentiles (min/avg/p50/p95/max in milliseconds), and allocation counts/bytes per event. Use the Makefile target (`make bench`) for a quick replay of the synthetic fixture with the repository's example configuration.
+The harness prints summary statistics after replaying the stream: total dispatches (with per-iteration and per-event breakdowns), latency percentiles (min/avg/p50/p95/max in milliseconds), and allocation counts/bytes per event. Use the Makefile target (`make bench`) for a quick replay of the synthetic fixture with the repository's example configuration.
 
 ## Configuration
 

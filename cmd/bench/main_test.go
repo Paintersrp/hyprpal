@@ -118,6 +118,9 @@ func TestBuildReport(t *testing.T) {
 	if summary.Dispatches.Total != 8 {
 		t.Fatalf("Dispatches.Total = %d, want 8", summary.Dispatches.Total)
 	}
+	if math.Abs(summary.Dispatches.PerEvent-2) > 1e-9 {
+		t.Fatalf("Dispatches.PerEvent = %f, want 2", summary.Dispatches.PerEvent)
+	}
 	if math.Abs(summary.Allocations.PerEvent-125) > 1e-9 {
 		t.Fatalf("Allocations.PerEvent = %f, want 125", summary.Allocations.PerEvent)
 	}
