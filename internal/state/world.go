@@ -281,6 +281,23 @@ func (w *World) MoveClient(address string, workspaceID int, monitorName string) 
 	return false, fmt.Errorf("client %s not found", address)
 }
 
+// SetClientTitle updates the cached title for a client.
+func (w *World) SetClientTitle(address, title string) (bool, error) {
+	if w == nil {
+		return false, errors.New("world is nil")
+	}
+	for i := range w.Clients {
+		if w.Clients[i].Address == address {
+			if w.Clients[i].Title == title {
+				return false, nil
+			}
+			w.Clients[i].Title = title
+			return true, nil
+		}
+	}
+	return false, fmt.Errorf("client %s not found", address)
+}
+
 // SetActiveClient updates the active client address and client focus flags.
 func (w *World) SetActiveClient(address string) bool {
 	if w == nil {
