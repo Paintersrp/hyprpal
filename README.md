@@ -198,8 +198,9 @@ Pair `--log-level=trace` with `--dry-run` to audition rules without moving windo
 ## Performance & Benchmarks
 
 `make bench` wraps `go run ./cmd/bench --config configs/example.yaml --fixture fixtures/coding.json --iterations 25` to
-replay the synthetic Coding-mode fixture and capture latency/allocation stats. The command prints a JSON payload; pipe to
-`jq '.summary'` for the aggregated metrics that feed the table below. Pass `PROFILE=1` to emit CPU/heap profiles in
+replay the synthetic Coding-mode fixture and capture latency/allocation stats. The command prints a JSON payload by default;
+pipe to `jq '.summary'` for the aggregated metrics that feed the table below or pass `--output bench.json` to save the full
+report for later comparison. Pass `PROFILE=1` to emit CPU/heap profiles in
 `docs/flamegraphs/` (see [docs/perf.md](docs/perf.md) for the exact workflow plus instructions for replaying your own capture).
 
 **Key gains over v0.4 (synthetic Coding-mode stream, 25 iterations, Go 1.22.2 on Ryzen 7 7840U):**

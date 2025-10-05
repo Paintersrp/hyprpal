@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -72,6 +73,8 @@ type benchSummary struct {
 	Dispatches         benchDispatchStats   `json:"dispatches"`
 	Latency            benchLatencyStats    `json:"latency"`
 	Allocations        benchAllocationStats `json:"allocations"`
+	TotalDurationMs    float64              `json:"totalDurationMs"`
+	EventsPerSecond    float64              `json:"eventsPerSecond"`
 }
 
 type benchReport struct {
@@ -159,6 +162,7 @@ func main() {
 	modeFlag := flag.String("mode", "", "mode to activate before replay")
 	logLevel := flag.String("log-level", "warn", "log level (trace|debug|info|warn|error)")
 	respectDelays := flag.Bool("respect-delays", false, "sleep for event delays declared in the fixture")
+	outputPath := flag.String("output", "-", "write JSON report to file ('-' for stdout)")
 	flag.Parse()
 
 	if *iterations <= 0 {
@@ -274,7 +278,7 @@ func main() {
 	}
 
 	report := buildReport(fixture, activeMode, *iterations, durations, totalDispatches, startMem, endMem)
-	if err := printReport(report); err != nil {
+	if err := writeReport(report, *outputPath); err != nil {
 		exitErr(fmt.Errorf("encode report: %w", err))
 	}
 }
@@ -341,6 +345,8 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 			MiBTotal:      float64(bytesAllocated) / (1024 * 1024),
 			MiBPerEvent:   bytesPerEvent / (1024 * 1024),
 		},
+		TotalDurationMs: toMillis(total),
+		EventsPerSecond: eventsPerSecond(total, totalEvents),
 	}
 
 	return benchReport{Summary: summary, DurationsMs: durationsMs}
@@ -353,10 +359,38 @@ func safeDivide(total int, count int) float64 {
 	return float64(total) / float64(count)
 }
 
-func printReport(report benchReport) error {
-	enc := json.NewEncoder(os.Stdout)
+func writeReport(report benchReport, outputPath string) error {
+	var (
+		w   io.Writer
+		out *os.File
+		err error
+	)
+	switch strings.TrimSpace(outputPath) {
+	case "", "-":
+		w = os.Stdout
+	default:
+		out, err = os.Create(outputPath)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		w = out
+	}
+
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(report)
+}
+
+func eventsPerSecond(total time.Duration, events int) float64 {
+	if total <= 0 || events == 0 {
+		return 0
+	}
+	seconds := total.Seconds()
+	if seconds <= 0 {
+		return 0
+	}
+	return float64(events) / seconds
 }
 
 func percentile(sorted []time.Duration, p float64) time.Duration {

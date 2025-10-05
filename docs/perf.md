@@ -25,6 +25,7 @@ PROFILE=1 go run ./cmd/bench \
   --config configs/example.yaml \
   --fixture fixtures/coding.json \
   --iterations 25 \
+  --output docs/flamegraphs/v0.5-bench.json \
   --cpu-profile docs/flamegraphs/v0.5-bench-cpu.pb.gz \
   --mem-profile docs/flamegraphs/v0.5-bench-heap.pb.gz
 ```
@@ -32,7 +33,9 @@ PROFILE=1 go run ./cmd/bench \
 Set `PROFILE=1` in the environment to instruct the Makefile target to add the
 `--cpu-profile`/`--mem-profile` flags. Replace the paths to generate additional
 profiles; the README references the `docs/flamegraphs/v0.5-bench-{cpu,heap}.pb.gz`
-artifacts by default. Convert profiles to SVG flamegraphs with:
+artifacts by default. Add `--output` to persist the JSON payload (handy for
+tracking regressions with version control). Convert profiles to SVG flamegraphs
+with:
 
 ```bash
 go tool pprof -http=:0 docs/flamegraphs/v0.5-bench-cpu.pb.gz
