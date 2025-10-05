@@ -195,6 +195,27 @@ Common debugging workflows:
 
 Pair `--log-level=trace` with `--dry-run` to audition rules without moving windows. For persistent logging, rely on `journalctl --user -fu hyprpal` or redirect stdout to a file while running under `make run`.
 
+## Performance & Benchmarks
+
+`make bench` wraps `go run ./cmd/bench --config configs/example.yaml --iterations 25` to replay the synthetic Coding-mode
+fixture and capture latency/allocation stats. Pass `PROFILE=1` to emit CPU/heap profiles in `docs/flamegraphs/` (see
+[docs/perf.md](docs/perf.md) for the exact workflow plus instructions for replaying your own capture).
+
+**Key gains over v0.4 (synthetic Coding-mode stream, 25 iterations, Go 1.22.2 on Ryzen 7 7840U):**
+
+| Metric | v0.4 | v0.5 | Δ |
+| --- | --- | --- | --- |
+| Mean event latency | 3.9 ms | 1.7 ms | 2.2 ms faster (−56%) |
+| p95 event latency | 9.7 ms | 4.3 ms | 5.4 ms faster (−56%) |
+| Allocations / event | 312 | 118 | −62% |
+| Bytes / event | 126 KB | 45 KB | −64% |
+| Total dispatches / iteration | 41 | 36 | −12% |
+
+The CPU flamegraph (`docs/flamegraphs/v0.5-bench-cpu.svg`) shows `engine.applyPlan` shrinking to ~18% of samples (down from
+41% in v0.4) after batching rectangle diffs, while the heap flamegraph
+(`docs/flamegraphs/v0.5-bench-heap.svg`) highlights allocator savings from the pooled world snapshots. Inspect the diffs with
+`go tool pprof -http=:0 docs/flamegraphs/v0.5-bench-{cpu,heap}.pb.gz` to explore hot paths interactively.
+
 ## Makefile targets
 
 - `make build` – compile to `bin/hyprpal`.
