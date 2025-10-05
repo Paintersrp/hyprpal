@@ -34,8 +34,11 @@ Set `PROFILE=1` in the environment to instruct the Makefile target to add the
 `--cpu-profile`/`--mem-profile` flags. Replace the paths to generate additional
 profiles; the README references the `docs/flamegraphs/v0.5-bench-{cpu,heap}.pb.gz`
 artifacts by default. Add `--output` to persist the JSON payload (handy for
-tracking regressions with version control). Convert profiles to SVG flamegraphs
-with:
+tracking regressions with version control). Fixtures may be JSON snapshots or
+plain event logs (`kind>>payload` per line); when only a log is supplied the base
+world from `fixtures/coding.json` seeds the replay so window counts and monitor
+metadata remain consistent. Use `--respect-delays` to mirror pacing captured in
+the fixture. Convert profiles to SVG flamegraphs with:
 
 ```bash
 go tool pprof -http=:0 docs/flamegraphs/v0.5-bench-cpu.pb.gz

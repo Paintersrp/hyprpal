@@ -486,6 +486,9 @@ func loadFixture(path string, base benchFixture) (benchFixture, error) {
 		if len(fixture.Monitors) == 0 {
 			fixture.Monitors = append([]state.Monitor(nil), base.Monitors...)
 		}
+		if fixture.Mode == "" {
+			fixture.Mode = base.Mode
+		}
 		if fixture.ActiveWorkspace == 0 {
 			fixture.ActiveWorkspace = base.ActiveWorkspace
 		}
