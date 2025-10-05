@@ -212,6 +212,98 @@ func TestFullscreenPlanSkipsOnUnmanagedWorkspace(t *testing.T) {
 	}
 }
 
+func TestGridPlanSkipsMissingClients(t *testing.T) {
+	action := &GridLayoutAction{
+		WorkspaceID:   1,
+		ColumnWeights: []float64{1, 1},
+		RowWeights:    []float64{1},
+		Slots: []GridSlotAction{{
+			Name:    "primary",
+			Row:     0,
+			Col:     0,
+			RowSpan: 1,
+			ColSpan: 2,
+			Match:   func(c state.Client) bool { return strings.EqualFold(c.Class, "Code") },
+		}},
+	}
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xaaa",
+			WorkspaceID: 1,
+			MonitorName: "DP-1",
+			Class:       "Chat",
+		}},
+		Workspaces: []state.Workspace{{ID: 1, MonitorName: "DP-1"}},
+		Monitors:   []state.Monitor{{Name: "DP-1", Rectangle: layout.Rect{Width: 1000, Height: 800}}},
+	}
+	ctx := ActionContext{
+		World:           world,
+		RuleName:        "grid",
+		Gaps:            layout.Gaps{},
+		MonitorReserved: map[string]layout.Insets{},
+	}
+	plan, err := action.Plan(ctx)
+	if err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+	if len(plan.Commands) != 0 {
+		t.Fatalf("expected no commands when slot has no matching client")
+	}
+}
+
+func TestGridPlanIgnoresOutOfBoundsSlot(t *testing.T) {
+	matched := false
+	action := &GridLayoutAction{
+		WorkspaceID:   2,
+		ColumnWeights: []float64{1, 1},
+		RowWeights:    []float64{1, 1},
+		Slots: []GridSlotAction{{
+			Name:    "invalid",
+			Row:     5,
+			Col:     0,
+			RowSpan: 1,
+			ColSpan: 1,
+			Match:   func(c state.Client) bool { return true },
+		}, {
+			Name:    "valid",
+			Row:     0,
+			Col:     0,
+			RowSpan: 1,
+			ColSpan: 1,
+			Match: func(c state.Client) bool {
+				matched = true
+				return true
+			},
+		}},
+	}
+	world := &state.World{
+		Clients: []state.Client{{
+			Address:     "0xbbb",
+			WorkspaceID: 2,
+			MonitorName: "DP-2",
+			Geometry:    layout.Rect{Width: 100, Height: 100},
+		}},
+		Workspaces: []state.Workspace{{ID: 2, MonitorName: "DP-2"}},
+		Monitors:   []state.Monitor{{Name: "DP-2", Rectangle: layout.Rect{Width: 1200, Height: 800}}},
+	}
+	ctx := ActionContext{
+		World:           world,
+		RuleName:        "grid",
+		Gaps:            layout.Gaps{},
+		MonitorReserved: map[string]layout.Insets{},
+	}
+	plan, err := action.Plan(ctx)
+	if err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+	if len(plan.Commands) == 0 {
+		t.Fatalf("expected commands for valid slot")
+	}
+	if !matched {
+		t.Fatalf("expected matcher to be invoked for valid slot")
+	}
+}
+
 func TestFullscreenPlanAllowsWhenOptedIn(t *testing.T) {
 	action := &FullscreenAction{Target: "active", Match: func(state.Client) bool { return true }}
 	world := &state.World{
