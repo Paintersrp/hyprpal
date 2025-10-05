@@ -22,6 +22,23 @@ type hyprctlClient interface {
 	layout.Dispatcher
 }
 
+type ticker interface {
+	C() <-chan time.Time
+	Stop()
+}
+
+type realTicker struct {
+	*time.Ticker
+}
+
+func (t realTicker) C() <-chan time.Time {
+	return t.Ticker.C
+}
+
+type subscribeFunc func(ctx context.Context, logger *util.Logger) (<-chan ipc.Event, error)
+
+const defaultPeriodicReconcileInterval = 60 * time.Second
+
 // Engine ties together the world model, rules, and IPC.
 type Engine struct {
 	hyprctl hyprctlClient
@@ -43,6 +60,9 @@ type Engine struct {
 	lastWorld   *state.World
 	evalLog     *evaluationLog
 	ruleChecks  *ruleCheckHistory
+
+	tickerFactory func() ticker
+	subscribe     subscribeFunc
 }
 
 const (
@@ -113,6 +133,10 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		execHistory:    make(map[string][]time.Time),
 		evalLog:        newEvaluationLog(0),
 		ruleChecks:     newRuleCheckHistory(0),
+		tickerFactory: func() ticker {
+			return realTicker{time.NewTicker(defaultPeriodicReconcileInterval)}
+		},
+		subscribe: ipc.Subscribe,
 	}
 }
 
@@ -206,14 +230,27 @@ func (e *Engine) Run(ctx context.Context) error {
 	if err := e.reconcileAndApply(ctx); err != nil {
 		return err
 	}
-	events, err := ipc.Subscribe(ctx, e.logger)
+	tick := e.newTicker()
+	defer tick.Stop()
+
+	events, err := e.subscribeEvents(ctx)
 	if err != nil {
+		tick.Stop()
 		return err
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-tick.C():
+			e.logger.Infof("periodic reconcile tick")
+			if err := e.reconcileAndApply(ctx); err != nil {
+				if ctx.Err() != nil {
+					e.logger.Debugf("periodic reconcile aborted: %v", err)
+				} else {
+					e.logger.Errorf("periodic reconcile failed: %v", err)
+				}
+			}
 		case ev, ok := <-events:
 			if !ok {
 				return fmt.Errorf("event stream closed")
@@ -233,6 +270,20 @@ func (e *Engine) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (e *Engine) newTicker() ticker {
+	if e.tickerFactory != nil {
+		return e.tickerFactory()
+	}
+	return realTicker{time.NewTicker(defaultPeriodicReconcileInterval)}
+}
+
+func (e *Engine) subscribeEvents(ctx context.Context) (<-chan ipc.Event, error) {
+	if e.subscribe != nil {
+		return e.subscribe(ctx, e.logger)
+	}
+	return ipc.Subscribe(ctx, e.logger)
 }
 
 // Reconcile triggers a manual world refresh and rule evaluation.
