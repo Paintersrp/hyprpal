@@ -53,10 +53,11 @@ const (
 )
 
 type plannedRule struct {
-	Key  string
-	Mode string
-	Name string
-	Plan layout.Plan
+	Key      string
+	Mode     string
+	Name     string
+	Priority int
+	Plan     layout.Plan
 }
 
 // PlannedCommand represents a hyprctl dispatch that would be executed for the
@@ -88,8 +89,9 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 	modeMap := make(map[string]rules.Mode)
 	order := make([]string, 0, len(modes))
 	for _, m := range modes {
-		modeMap[m.Name] = m
-		order = append(order, m.Name)
+		normalized := rules.NormalizeMode(m)
+		modeMap[normalized.Name] = normalized
+		order = append(order, normalized.Name)
 	}
 	active := ""
 	if len(order) > 0 {
@@ -137,8 +139,9 @@ func (e *Engine) ReloadModes(modes []rules.Mode) {
 	modeMap := make(map[string]rules.Mode)
 	order := make([]string, 0, len(modes))
 	for _, m := range modes {
-		modeMap[m.Name] = m
-		order = append(order, m.Name)
+		normalized := rules.NormalizeMode(m)
+		modeMap[normalized.Name] = normalized
+		order = append(order, normalized.Name)
 	}
 	e.modes = modeMap
 	e.modeOrder = order
@@ -396,96 +399,124 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 	planned := make([]plannedRule, 0, len(mode.Rules))
 	monitorInsets := e.combineMonitorInsets(world.Monitors)
 	evalCtx := rules.EvalContext{Mode: activeMode, World: world}
-	for _, rule := range mode.Rules {
-		key := activeMode + ":" + rule.Name
+
+	groups := mode.PriorityGroups
+	if len(groups) == 0 && len(mode.Rules) > 0 {
+		normalized := rules.NormalizeMode(mode)
+		groups = normalized.PriorityGroups
+		mode = normalized
 		e.mu.Lock()
-		last := e.debounce[key]
-		cooldownUntil := e.cooldown[key]
+		if _, exists := e.modes[activeMode]; exists {
+			e.modes[activeMode] = normalized
+		}
 		e.mu.Unlock()
-		matched := true
-		predicateTrace := &rules.PredicateTrace{Kind: "predicate", Result: true}
-		if rule.Tracer != nil {
-			matched, predicateTrace = rule.Tracer.Trace(evalCtx)
-		} else {
-			matched = rule.When(evalCtx)
-			predicateTrace = &rules.PredicateTrace{Kind: "predicate", Result: matched}
-		}
-		record := RuleCheckRecord{
-			Timestamp: now,
-			Mode:      activeMode,
-			Rule:      rule.Name,
-			Matched:   matched,
-			Predicate: predicateTrace,
-		}
-		if cooldownUntil.After(now) {
-			if log {
-				e.logger.Infof("rule %s skipped (cooldown) [mode %s]", rule.Name, activeMode)
+	}
+
+	for _, group := range groups {
+		groupMutated := false
+		for _, rule := range group.Rules {
+			key := activeMode + ":" + rule.Name
+			e.mu.Lock()
+			last := e.debounce[key]
+			cooldownUntil := e.cooldown[key]
+			e.mu.Unlock()
+			matched := true
+			predicateTrace := &rules.PredicateTrace{Kind: "predicate", Result: true}
+			if rule.Tracer != nil {
+				matched, predicateTrace = rule.Tracer.Trace(evalCtx)
+			} else {
+				matched = rule.When(evalCtx)
+				predicateTrace = &rules.PredicateTrace{Kind: "predicate", Result: matched}
 			}
-			record.Reason = "cooldown"
-			e.recordRuleCheck(record)
-			continue
-		}
-		if !last.IsZero() && now.Sub(last) < rule.Debounce {
-			if log {
-				e.logger.Infof("rule %s skipped (debounced) [mode %s]", rule.Name, activeMode)
+			record := RuleCheckRecord{
+				Timestamp: now,
+				Mode:      activeMode,
+				Rule:      rule.Name,
+				Matched:   matched,
+				Predicate: predicateTrace,
 			}
-			record.Reason = "debounced"
-			e.recordRuleCheck(record)
-			continue
-		}
-		if !matched {
-			record.Reason = "predicate"
-			e.recordRuleCheck(record)
-			continue
-		}
-		rulePlan := layout.Plan{}
-		for _, action := range rule.Actions {
-			p, err := action.Plan(rules.ActionContext{
-				World:             world,
-				Logger:            e.logger,
-				RuleName:          rule.Name,
-				ManagedWorkspaces: rule.ManagedWorkspaces,
-				MutateUnmanaged:   rule.MutateUnmanaged,
-				Gaps:              gaps,
-				TolerancePx:       tolerance,
-				MonitorReserved:   monitorInsets,
-			})
-			if err != nil {
-				e.logger.Errorf("rule %s action error: %v", rule.Name, err)
+			if cooldownUntil.After(now) {
+				if log {
+					e.logger.Infof("rule %s skipped (cooldown) [mode %s]", rule.Name, activeMode)
+				}
+				record.Reason = "cooldown"
+				e.recordRuleCheck(record)
 				continue
 			}
-			rulePlan.Merge(p)
-		}
-		if len(rulePlan.Commands) == 0 {
-			record.Reason = "no-commands"
-			e.recordRuleCheck(record)
-			continue
-		}
-		throttled := e.trackExecution(key, rulePlan, now)
-		if throttled {
-			if log {
-				e.logger.Warnf("rule %s temporarily disabled after %d executions in %s [mode %s]", rule.Name, ruleBurstThreshold, ruleBurstWindow, activeMode)
+			if !last.IsZero() && now.Sub(last) < rule.Debounce {
+				if log {
+					e.logger.Infof("rule %s skipped (debounced) [mode %s]", rule.Name, activeMode)
+				}
+				record.Reason = "debounced"
+				e.recordRuleCheck(record)
+				continue
 			}
-			record.Reason = "throttled"
-			e.recordRuleCheck(record)
-			continue
-		}
-		plan.Merge(rulePlan)
-		if log {
-			e.trace("rule.matched", map[string]any{
-				"mode":     activeMode,
-				"rule":     rule.Name,
-				"commands": rulePlan.Commands,
+			if !matched {
+				record.Reason = "predicate"
+				e.recordRuleCheck(record)
+				continue
+			}
+			rulePlan := layout.Plan{}
+			for _, action := range rule.Actions {
+				p, err := action.Plan(rules.ActionContext{
+					World:             world,
+					Logger:            e.logger,
+					RuleName:          rule.Name,
+					ManagedWorkspaces: rule.ManagedWorkspaces,
+					MutateUnmanaged:   rule.MutateUnmanaged,
+					Gaps:              gaps,
+					TolerancePx:       tolerance,
+					MonitorReserved:   monitorInsets,
+				})
+				if err != nil {
+					e.logger.Errorf("rule %s action error: %v", rule.Name, err)
+					continue
+				}
+				rulePlan.Merge(p)
+			}
+			if len(rulePlan.Commands) == 0 {
+				record.Reason = "no-commands"
+				e.recordRuleCheck(record)
+				continue
+			}
+			throttled := e.trackExecution(key, rulePlan, now)
+			if throttled {
+				if log {
+					e.logger.Warnf("rule %s temporarily disabled after %d executions in %s [mode %s]", rule.Name, ruleBurstThreshold, ruleBurstWindow, activeMode)
+				}
+				record.Reason = "throttled"
+				e.recordRuleCheck(record)
+				continue
+			}
+			plan.Merge(rulePlan)
+			groupMutated = true
+			if log {
+				e.trace("rule.matched", map[string]any{
+					"mode":     activeMode,
+					"rule":     rule.Name,
+					"priority": rule.Priority,
+					"commands": rulePlan.Commands,
+				})
+			}
+			planned = append(planned, plannedRule{
+				Key:      key,
+				Mode:     activeMode,
+				Name:     rule.Name,
+				Priority: rule.Priority,
+				Plan:     rulePlan,
 			})
+			record.Reason = "matched"
+			e.recordRuleCheck(record)
 		}
-		planned = append(planned, plannedRule{
-			Key:  key,
-			Mode: activeMode,
-			Name: rule.Name,
-			Plan: rulePlan,
-		})
-		record.Reason = "matched"
-		e.recordRuleCheck(record)
+		if groupMutated {
+			if log {
+				e.trace("rules.priority-stop", map[string]any{
+					"mode":     activeMode,
+					"priority": group.Priority,
+				})
+			}
+			break
+		}
 	}
 	return plan, planned
 }

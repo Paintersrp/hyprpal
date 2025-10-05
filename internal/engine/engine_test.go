@@ -246,6 +246,120 @@ func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
 	}
 }
 
+func TestEvaluateStopsAfterHigherPriorityMutations(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+
+	var highPlan layout.Plan
+	highPlan.Add("high-priority")
+	var lowPlan layout.Plan
+	lowPlan.Add("low-priority")
+
+	mode := rules.Mode{
+		Name: "Focus",
+		Rules: []rules.Rule{
+			{
+				Name:     "high",
+				When:     func(rules.EvalContext) bool { return true },
+				Actions:  []rules.Action{stubAction{plan: highPlan}},
+				Priority: 10,
+			},
+			{
+				Name:     "low",
+				When:     func(rules.EvalContext) bool { return true },
+				Actions:  []rules.Action{stubAction{plan: lowPlan}},
+				Priority: 1,
+			},
+		},
+	}
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != len(highPlan.Commands) {
+		t.Fatalf("expected only high priority commands, got %v", hypr.dispatched)
+	}
+	if got := hypr.dispatched[0]; len(got) == 0 || got[0] != "high-priority" {
+		t.Fatalf("expected high priority command, got %v", got)
+	}
+	records := eng.RuleCheckHistory()
+	for _, rec := range records {
+		if rec.Rule == "low" {
+			t.Fatalf("unexpected evaluation of low priority rule: %#v", rec)
+		}
+	}
+}
+
+func TestEvaluateContinuesWhenHigherPriorityNoOp(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces:      []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:        []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+		activeWorkspace: 1,
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+
+	var lowPlan layout.Plan
+	lowPlan.Add("low-priority")
+
+	mode := rules.Mode{
+		Name: "Focus",
+		Rules: []rules.Rule{
+			{
+				Name:     "high-noop",
+				When:     func(rules.EvalContext) bool { return true },
+				Actions:  []rules.Action{stubAction{}},
+				Priority: 10,
+			},
+			{
+				Name:     "low",
+				When:     func(rules.EvalContext) bool { return true },
+				Actions:  []rules.Action{stubAction{plan: lowPlan}},
+				Priority: 1,
+			},
+		},
+	}
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	if len(hypr.dispatched) != len(lowPlan.Commands) {
+		t.Fatalf("expected only low priority commands, got %v", hypr.dispatched)
+	}
+	if got := hypr.dispatched[0]; len(got) == 0 || got[0] != "low-priority" {
+		t.Fatalf("expected low priority command, got %v", got)
+	}
+	records := eng.RuleCheckHistory()
+	if len(records) < 2 {
+		t.Fatalf("expected rule checks for both rules, got %#v", records)
+	}
+	var seenHigh, seenLow bool
+	for _, rec := range records {
+		switch rec.Rule {
+		case "high-noop":
+			if rec.Reason != "no-commands" {
+				t.Fatalf("expected high priority noop to record no-commands, got %#v", rec)
+			}
+			seenHigh = true
+		case "low":
+			if rec.Reason != "matched" {
+				t.Fatalf("expected low priority rule to match, got %#v", rec)
+			}
+			seenLow = true
+		}
+	}
+	if !seenHigh || !seenLow {
+		t.Fatalf("expected to see both high and low rule evaluations, got %#v", records)
+	}
+}
+
 func TestReconcileUsesBatchDispatcherWhenAvailable(t *testing.T) {
 	base := &fakeHyprctl{
 		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
@@ -426,7 +540,7 @@ func TestTraceLoggingDryRunSequence(t *testing.T) {
 	}
 
 	traceLines := extractTraceLines(t, logs.String())
-	expectedOrder := []string{"world.reconciled", "rule.matched", "plan.aggregated", "dispatch.result", "dispatch.result"}
+	expectedOrder := []string{"world.reconciled", "rule.matched", "rules.priority-stop", "plan.aggregated", "dispatch.result", "dispatch.result"}
 	if len(traceLines) != len(expectedOrder) {
 		t.Fatalf("expected %d trace lines, got %d: %v", len(expectedOrder), len(traceLines), traceLines)
 	}
@@ -469,12 +583,12 @@ func TestTraceLoggingDryRunSequence(t *testing.T) {
 		t.Fatalf("expected rule mode Focus, got %v", rulePayload)
 	}
 
-	_, planPayload := parseTraceLine(t, traceLines[2])
+	_, planPayload := parseTraceLine(t, traceLines[3])
 	if intFromAny(t, planPayload["commandCount"]) != 2 {
 		t.Fatalf("expected commandCount 2, got %v", planPayload)
 	}
 
-	for i := 3; i < len(traceLines); i++ {
+	for i := 4; i < len(traceLines); i++ {
 		_, dispatchPayload := parseTraceLine(t, traceLines[i])
 		if payloadValue(t, dispatchPayload, "status").(string) != "dry-run" {
 			t.Fatalf("expected dry-run status, got %v", dispatchPayload)
