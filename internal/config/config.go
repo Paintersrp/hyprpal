@@ -504,18 +504,8 @@ func (c *Config) lintMatcherReferences(modeIdx, ruleIdx int, rule RuleConfig) []
 				if slot.Match == nil {
 					continue
 				}
-				profileVal, ok := slot.Match["profile"]
-				if !ok {
-					continue
-				}
-				profilePath := fmt.Sprintf("%s.params.slots[%d].match.profile", actionPath, slotIdx)
-				profileName, ok := stringForLint(profileVal, profilePath, false, &errs)
-				if !ok {
-					continue
-				}
-				if _, exists := c.Profiles[profileName]; !exists {
-					errs = append(errs, newLintError(profilePath, "references unknown profile %q", profileName))
-				}
+				matchPath := fmt.Sprintf("%s.params.slots[%d].match", actionPath, slotIdx)
+				c.lintMatchProfileRefs(matchPath, slot.Match, &errs)
 			}
 			continue
 		}
@@ -528,20 +518,88 @@ func (c *Config) lintMatcherReferences(modeIdx, ruleIdx int, rule RuleConfig) []
 			errs = append(errs, newLintError(actionPath+".params.match", "must be a mapping"))
 			continue
 		}
-		profileVal, ok := matchMap["profile"]
-		if !ok {
-			continue
-		}
-		profilePath := actionPath + ".params.match.profile"
-		profileName, ok := stringForLint(profileVal, profilePath, false, &errs)
-		if !ok {
-			continue
-		}
-		if _, exists := c.Profiles[profileName]; !exists {
-			errs = append(errs, newLintError(profilePath, "references unknown profile %q", profileName))
-		}
+		c.lintMatchProfileRefs(actionPath+".params.match", matchMap, &errs)
 	}
 	return errs
+}
+
+func (c *Config) lintMatchProfileRefs(path string, matchMap map[string]interface{}, errs *[]LintError) {
+	comboKeys := 0
+	if _, ok := matchMap["allOfProfiles"]; ok {
+		comboKeys++
+	}
+	if _, ok := matchMap["anyOfProfiles"]; ok {
+		comboKeys++
+	}
+	if comboKeys > 1 {
+		*errs = append(*errs, newLintError(path, "cannot combine allOfProfiles and anyOfProfiles"))
+	}
+	if profileVal, ok := matchMap["profile"]; ok {
+		profilePath := path + ".profile"
+		profileName, ok := stringForLint(profileVal, profilePath, false, errs)
+		if ok {
+			if _, exists := c.Profiles[profileName]; !exists {
+				*errs = append(*errs, newLintError(profilePath, "references unknown profile %q", profileName))
+			}
+		}
+	}
+	if namesVal, ok := matchMap["allOfProfiles"]; ok {
+		c.lintProfileList(path+".allOfProfiles", namesVal, errs)
+	}
+	if namesVal, ok := matchMap["anyOfProfiles"]; ok {
+		c.lintProfileList(path+".anyOfProfiles", namesVal, errs)
+	}
+}
+
+func (c *Config) lintProfileList(path string, value interface{}, errs *[]LintError) {
+	names, ok := stringSliceForLint(value, path, errs)
+	if !ok {
+		return
+	}
+	for i, name := range names {
+		if _, exists := c.Profiles[name]; !exists {
+			*errs = append(*errs, newLintError(fmt.Sprintf("%s[%d]", path, i), "references unknown profile %q", name))
+		}
+	}
+}
+
+func stringSliceForLint(value interface{}, path string, errs *[]LintError) ([]string, bool) {
+	switch list := value.(type) {
+	case []string:
+		if len(list) == 0 {
+			*errs = append(*errs, newLintError(path, "must not be empty"))
+			return nil, false
+		}
+		result := make([]string, len(list))
+		copy(result, list)
+		valid := true
+		for i, item := range result {
+			if item == "" {
+				*errs = append(*errs, newLintError(fmt.Sprintf("%s[%d]", path, i), "cannot be empty"))
+				valid = false
+			}
+		}
+		return result, valid
+	case []interface{}:
+		if len(list) == 0 {
+			*errs = append(*errs, newLintError(path, "must not be empty"))
+			return nil, false
+		}
+		result := make([]string, len(list))
+		valid := true
+		for i, item := range list {
+			str, ok := stringForLint(item, fmt.Sprintf("%s[%d]", path, i), false, errs)
+			if !ok {
+				valid = false
+				continue
+			}
+			result[i] = str
+		}
+		return result, valid
+	default:
+		*errs = append(*errs, newLintError(path, "must be a list of strings"))
+		return nil, false
+	}
 }
 
 func stringForLint(v interface{}, path string, allowEmpty bool, errs *[]LintError) (string, bool) {
