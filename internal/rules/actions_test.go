@@ -11,6 +11,92 @@ import (
 	"github.com/hyprpal/hyprpal/internal/util"
 )
 
+func TestParseClientMatcherAllOfProfiles(t *testing.T) {
+	profiles := map[string]config.MatcherConfig{
+		"comms": {AnyClass: []string{"Slack", "Discord"}},
+		"focus": {TitleRegex: "Focus"},
+	}
+
+	matcher, err := parseClientMatcher(map[string]interface{}{
+		"allOfProfiles": []interface{}{"comms", "focus"},
+	}, profiles)
+	if err != nil {
+		t.Fatalf("expected matcher, got error: %v", err)
+	}
+
+	client := state.Client{Class: "Slack", Title: "Deep Focus"}
+	if !matcher(client) {
+		t.Fatalf("expected matcher to require all profiles")
+	}
+
+	other := state.Client{Class: "Slack", Title: "Random"}
+	if matcher(other) {
+		t.Fatalf("expected matcher to reject when any profile fails")
+	}
+}
+
+func TestParseClientMatcherAnyOfProfiles(t *testing.T) {
+	profiles := map[string]config.MatcherConfig{
+		"term":   {Class: "foot"},
+		"editor": {TitleRegex: "Code"},
+	}
+
+	matcher, err := parseClientMatcher(map[string]interface{}{
+		"anyOfProfiles": []interface{}{"term", "editor"},
+	}, profiles)
+	if err != nil {
+		t.Fatalf("expected matcher, got error: %v", err)
+	}
+
+	if !matcher(state.Client{Class: "foot"}) {
+		t.Fatalf("expected matcher to match first profile")
+	}
+	if !matcher(state.Client{Class: "kitty", Title: "VS Code"}) {
+		t.Fatalf("expected matcher to match second profile")
+	}
+	if matcher(state.Client{Class: "kitty", Title: "Notes"}) {
+		t.Fatalf("expected matcher to reject when no profiles match")
+	}
+}
+
+func TestParseClientMatcherProfileRegression(t *testing.T) {
+	profiles := map[string]config.MatcherConfig{
+		"comms": {AnyClass: []string{"Slack"}},
+	}
+
+	matcher, err := parseClientMatcher(map[string]interface{}{"profile": "comms"}, profiles)
+	if err != nil {
+		t.Fatalf("expected matcher, got error: %v", err)
+	}
+	if !matcher(state.Client{Class: "Slack"}) {
+		t.Fatalf("expected matcher to use single profile")
+	}
+}
+
+func TestParseClientMatcherAllOfProfilesErrors(t *testing.T) {
+	profiles := map[string]config.MatcherConfig{}
+
+	if _, err := parseClientMatcher(map[string]interface{}{"allOfProfiles": []interface{}{}}, profiles); err == nil {
+		t.Fatalf("expected error for empty allOfProfiles")
+	}
+
+	if _, err := parseClientMatcher(map[string]interface{}{"allOfProfiles": []interface{}{"missing"}}, profiles); err == nil {
+		t.Fatalf("expected error for unknown profile in allOfProfiles")
+	}
+}
+
+func TestParseClientMatcherAnyOfProfilesErrors(t *testing.T) {
+	profiles := map[string]config.MatcherConfig{}
+
+	if _, err := parseClientMatcher(map[string]interface{}{"anyOfProfiles": []interface{}{}}, profiles); err == nil {
+		t.Fatalf("expected error for empty anyOfProfiles")
+	}
+
+	if _, err := parseClientMatcher(map[string]interface{}{"anyOfProfiles": []interface{}{"missing"}}, profiles); err == nil {
+		t.Fatalf("expected error for unknown profile in anyOfProfiles")
+	}
+}
+
 func TestBuildSidecarDockRejectsNarrowWidth(t *testing.T) {
 	_, err := buildSidecarDock(map[string]interface{}{
 		"workspace":    1,

@@ -205,6 +205,16 @@ func parseClientMatcher(v interface{}, profiles map[string]config.MatcherConfig)
 	if !ok {
 		return nil, fmt.Errorf("match must be a mapping")
 	}
+	comboKeys := 0
+	if _, ok := m["allOfProfiles"]; ok {
+		comboKeys++
+	}
+	if _, ok := m["anyOfProfiles"]; ok {
+		comboKeys++
+	}
+	if comboKeys > 1 {
+		return nil, fmt.Errorf("match cannot combine allOfProfiles and anyOfProfiles")
+	}
 	if profileName, ok := m["profile"]; ok {
 		name, err := assertString(profileName)
 		if err != nil {
@@ -215,6 +225,48 @@ func parseClientMatcher(v interface{}, profiles map[string]config.MatcherConfig)
 			return nil, fmt.Errorf("unknown match profile %q", name)
 		}
 		return matcherFromConfig(profile)
+	}
+	if namesVal, ok := m["allOfProfiles"]; ok {
+		names, err := stringSlice(namesVal)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			return nil, fmt.Errorf("allOfProfiles must not be empty")
+		}
+		matchers, err := matchersFromProfiles(names, profiles)
+		if err != nil {
+			return nil, err
+		}
+		return func(c state.Client) bool {
+			for _, matcher := range matchers {
+				if !matcher(c) {
+					return false
+				}
+			}
+			return true
+		}, nil
+	}
+	if namesVal, ok := m["anyOfProfiles"]; ok {
+		names, err := stringSlice(namesVal)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			return nil, fmt.Errorf("anyOfProfiles must not be empty")
+		}
+		matchers, err := matchersFromProfiles(names, profiles)
+		if err != nil {
+			return nil, err
+		}
+		return func(c state.Client) bool {
+			for _, matcher := range matchers {
+				if matcher(c) {
+					return true
+				}
+			}
+			return false
+		}, nil
 	}
 	if _, ok := m["class"]; ok {
 		cfg, err := matcherConfigFromMap(m)
@@ -238,6 +290,41 @@ func parseClientMatcher(v interface{}, profiles map[string]config.MatcherConfig)
 		return matcherFromConfig(cfg)
 	}
 	return nil, fmt.Errorf("match requires class, anyClass, or titleRegex")
+}
+
+func matchersFromProfiles(names []string, profiles map[string]config.MatcherConfig) ([]clientMatcher, error) {
+	matchers := make([]clientMatcher, 0, len(names))
+	for _, name := range names {
+		profile, exists := profiles[name]
+		if !exists {
+			return nil, fmt.Errorf("unknown match profile %q", name)
+		}
+		matcher, err := matcherFromConfig(profile)
+		if err != nil {
+			return nil, err
+		}
+		matchers = append(matchers, matcher)
+	}
+	return matchers, nil
+}
+
+func stringSlice(v interface{}) ([]string, error) {
+	if strList, ok := v.([]string); ok {
+		return append([]string(nil), strList...), nil
+	}
+	list, ok := v.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("profile list must be an array of strings")
+	}
+	result := make([]string, 0, len(list))
+	for _, item := range list {
+		str, err := assertString(item)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, str)
+	}
+	return result, nil
 }
 
 func matcherConfigFromMap(m map[string]interface{}) (config.MatcherConfig, error) {

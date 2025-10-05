@@ -80,6 +80,128 @@ func TestValidateProfileDefinition(t *testing.T) {
 	}
 }
 
+func TestValidateProfileAllOfCombination(t *testing.T) {
+	cfg := Config{
+		Profiles: MatcherProfiles{
+			"comms": {AnyClass: []string{"Slack", "Discord"}},
+			"focus": {TitleRegex: "Focus"},
+		},
+		Modes: []ModeConfig{{
+			Name: "Test",
+			Rules: []RuleConfig{{
+				Name: "Rule",
+				When: PredicateConfig{Mode: "Test"},
+				Actions: []ActionConfig{{
+					Type: "layout.fullscreen",
+					Params: map[string]interface{}{
+						"match": map[string]interface{}{
+							"allOfProfiles": []interface{}{"comms", "focus"},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestValidateProfileAnyOfCombination(t *testing.T) {
+	cfg := Config{
+		Profiles: MatcherProfiles{
+			"chat": {Class: "Slack"},
+			"mail": {Class: "Thunderbird"},
+		},
+		Modes: []ModeConfig{{
+			Name: "Test",
+			Rules: []RuleConfig{{
+				Name: "Rule",
+				When: PredicateConfig{Mode: "Test"},
+				Actions: []ActionConfig{{
+					Type: "layout.grid",
+					Params: map[string]interface{}{
+						"workspace": 1,
+						"slots": []interface{}{
+							map[string]interface{}{
+								"name": "chat",
+								"row":  0,
+								"col":  0,
+								"match": map[string]interface{}{
+									"anyOfProfiles": []interface{}{"chat", "mail"},
+								},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestValidateAnyOfProfilesEmptyList(t *testing.T) {
+	cfg := Config{
+		Profiles: MatcherProfiles{"chat": {Class: "Slack"}},
+		Modes: []ModeConfig{{
+			Name: "Test",
+			Rules: []RuleConfig{{
+				Name: "Rule",
+				When: PredicateConfig{Mode: "Test"},
+				Actions: []ActionConfig{{
+					Type: "layout.fullscreen",
+					Params: map[string]interface{}{
+						"match": map[string]interface{}{
+							"anyOfProfiles": []interface{}{},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected validation error for empty anyOfProfiles")
+	}
+}
+
+func TestValidateGridAllOfProfilesUnknown(t *testing.T) {
+	cfg := Config{
+		Profiles: MatcherProfiles{"chat": {Class: "Slack"}},
+		Modes: []ModeConfig{{
+			Name: "Test",
+			Rules: []RuleConfig{{
+				Name: "Rule",
+				When: PredicateConfig{Mode: "Test"},
+				Actions: []ActionConfig{{
+					Type: "layout.grid",
+					Params: map[string]interface{}{
+						"workspace": 1,
+						"slots": []interface{}{
+							map[string]interface{}{
+								"name": "chat",
+								"row":  0,
+								"col":  0,
+								"match": map[string]interface{}{
+									"allOfProfiles": []interface{}{"chat", "missing"},
+								},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected validation error for unknown profile in grid allOfProfiles")
+	}
+}
+
 func TestValidateManualReservedRejectsNegative(t *testing.T) {
 	cfg := Config{
 		Modes: []ModeConfig{{
