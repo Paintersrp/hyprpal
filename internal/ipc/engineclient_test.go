@@ -1,8 +1,8 @@
 package ipc
 
 import (
+	"bufio"
 	"errors"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -13,7 +13,9 @@ import (
 	"github.com/hyprpal/hyprpal/internal/layout"
 )
 
-func TestNewEngineClientSocketStrategy(t *testing.T) {
+func setupEngineSocket(t *testing.T) net.Listener {
+	t.Helper()
+
 	runtimeDir := t.TempDir()
 	sig := "instance"
 	setEnv(t, "XDG_RUNTIME_DIR", runtimeDir)
@@ -30,6 +32,11 @@ func TestNewEngineClientSocketStrategy(t *testing.T) {
 	t.Cleanup(func() {
 		listener.Close()
 	})
+	return listener
+}
+
+func TestNewEngineClientSocketStrategy(t *testing.T) {
+	listener := setupEngineSocket(t)
 
 	client, strategy, err := NewEngineClient(nil, DispatchStrategySocket)
 	if err != nil {
@@ -38,8 +45,11 @@ func TestNewEngineClientSocketStrategy(t *testing.T) {
 	if strategy != DispatchStrategySocket {
 		t.Fatalf("unexpected strategy: got %s want %s", strategy, DispatchStrategySocket)
 	}
+	if _, ok := client.dispatcher.(*socketDispatcher); !ok {
+		t.Fatalf("expected socket dispatcher, got %T", client.dispatcher)
+	}
 
-	batchConn := make(chan net.Conn, 1)
+	batchLines := make(chan []string, 1)
 	batchErr := make(chan error, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -47,7 +57,26 @@ func TestNewEngineClientSocketStrategy(t *testing.T) {
 			batchErr <- err
 			return
 		}
-		batchConn <- conn
+		defer conn.Close()
+
+		reader := bufio.NewReader(conn)
+		var lines []string
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				batchErr <- err
+				return
+			}
+			lines = append(lines, strings.TrimSuffix(line, "\n"))
+			if strings.TrimSpace(line) == "commit" {
+				break
+			}
+		}
+		if _, err := conn.Write([]byte("ok\n")); err != nil {
+			batchErr <- err
+			return
+		}
+		batchLines <- lines
 	}()
 
 	commands := [][]string{{"focuswindow", "address:test"}, {"movewindowpixel", "exact", "0", "0"}}
@@ -55,18 +84,12 @@ func TestNewEngineClientSocketStrategy(t *testing.T) {
 		t.Fatalf("DispatchBatch: %v", err)
 	}
 
-	var conn net.Conn
+	var lines []string
 	select {
 	case err := <-batchErr:
-		t.Fatalf("batch accept: %v", err)
-	case conn = <-batchConn:
+		t.Fatalf("batch handler: %v", err)
+	case lines = <-batchLines:
 	}
-	data, err := io.ReadAll(conn)
-	conn.Close()
-	if err != nil {
-		t.Fatalf("read batch payload: %v", err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	expected := []string{
 		"begin",
 		"dispatch focuswindow address:test",
@@ -77,7 +100,7 @@ func TestNewEngineClientSocketStrategy(t *testing.T) {
 		t.Fatalf("unexpected payload: %#v", lines)
 	}
 
-	singleConn := make(chan net.Conn, 1)
+	singleLine := make(chan string, 1)
 	singleErr := make(chan error, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -85,26 +108,33 @@ func TestNewEngineClientSocketStrategy(t *testing.T) {
 			singleErr <- err
 			return
 		}
-		singleConn <- conn
+		defer conn.Close()
+
+		reader := bufio.NewReader(conn)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			singleErr <- err
+			return
+		}
+		if _, err := conn.Write([]byte("ok\n")); err != nil {
+			singleErr <- err
+			return
+		}
+		singleLine <- strings.TrimSpace(line)
 	}()
 
 	if err := client.Dispatch("focuswindow", "address:solo"); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
 
-	var single net.Conn
+	var single string
 	select {
 	case err := <-singleErr:
-		t.Fatalf("single accept: %v", err)
-	case single = <-singleConn:
+		t.Fatalf("single handler: %v", err)
+	case single = <-singleLine:
 	}
-	payload, err := io.ReadAll(single)
-	single.Close()
-	if err != nil {
-		t.Fatalf("read single payload: %v", err)
-	}
-	if got := strings.TrimSpace(string(payload)); got != "dispatch focuswindow address:solo" {
-		t.Fatalf("unexpected single payload: %q", got)
+	if single != "dispatch focuswindow address:solo" {
+		t.Fatalf("unexpected single payload: %q", single)
 	}
 }
 
@@ -135,4 +165,106 @@ func TestNewEngineClientSocketFallback(t *testing.T) {
 	if err := client.DispatchBatch([][]string{{"noop"}}); !errors.Is(err, layout.ErrBatchUnsupported) {
 		t.Fatalf("expected batch unsupported, got %v", err)
 	}
+}
+
+func TestEngineClientSocketStrategyErrors(t *testing.T) {
+	t.Run("single", func(t *testing.T) {
+		listener := setupEngineSocket(t)
+
+		client, strategy, err := NewEngineClient(nil, DispatchStrategySocket)
+		if err != nil {
+			t.Fatalf("NewEngineClient: %v", err)
+		}
+		if strategy != DispatchStrategySocket {
+			t.Fatalf("unexpected strategy: got %s want %s", strategy, DispatchStrategySocket)
+		}
+		if _, ok := client.dispatcher.(*socketDispatcher); !ok {
+			t.Fatalf("expected socket dispatcher, got %T", client.dispatcher)
+		}
+
+		serverErr := make(chan error, 1)
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				serverErr <- err
+				return
+			}
+			defer conn.Close()
+
+			reader := bufio.NewReader(conn)
+			if _, err := reader.ReadString('\n'); err != nil {
+				serverErr <- err
+				return
+			}
+			if _, err := conn.Write([]byte("err=bad dispatch\n")); err != nil {
+				serverErr <- err
+				return
+			}
+			serverErr <- nil
+		}()
+
+		err = client.Dispatch("focuswindow", "address:test")
+		if err == nil {
+			t.Fatalf("Dispatch succeeded, want error")
+		}
+		if !strings.Contains(err.Error(), "err=bad dispatch") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if serr := <-serverErr; serr != nil {
+			t.Fatalf("server error: %v", serr)
+		}
+	})
+
+	t.Run("batch", func(t *testing.T) {
+		listener := setupEngineSocket(t)
+
+		client, strategy, err := NewEngineClient(nil, DispatchStrategySocket)
+		if err != nil {
+			t.Fatalf("NewEngineClient: %v", err)
+		}
+		if strategy != DispatchStrategySocket {
+			t.Fatalf("unexpected strategy: got %s want %s", strategy, DispatchStrategySocket)
+		}
+
+		serverErr := make(chan error, 1)
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				serverErr <- err
+				return
+			}
+			defer conn.Close()
+
+			reader := bufio.NewReader(conn)
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					serverErr <- err
+					return
+				}
+				if strings.TrimSpace(line) == "commit" {
+					break
+				}
+			}
+			if _, err := conn.Write([]byte("err=batch failed\n")); err != nil {
+				serverErr <- err
+				return
+			}
+			serverErr <- nil
+		}()
+
+		err = client.DispatchBatch([][]string{
+			{"focuswindow", "address:test"},
+			{"movewindowpixel", "exact", "0", "0"},
+		})
+		if err == nil {
+			t.Fatalf("DispatchBatch succeeded, want error")
+		}
+		if !strings.Contains(err.Error(), "err=batch failed") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if serr := <-serverErr; serr != nil {
+			t.Fatalf("server error: %v", serr)
+		}
+	})
 }
