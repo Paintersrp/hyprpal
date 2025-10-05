@@ -20,6 +20,7 @@ type ActionContext struct {
 	AllowUnmanaged    bool
 	Gaps              layout.Gaps
 	TolerancePx       float64
+	MonitorReserved   map[string]layout.Insets
 }
 
 func (ctx ActionContext) workspaceAllowed(id int) bool {
@@ -251,7 +252,13 @@ func (a *SidecarDockAction) Plan(ctx ActionContext) (layout.Plan, error) {
 	if err != nil {
 		return layout.Plan{}, err
 	}
-	_, dock := layout.SplitSidecar(monitor.Rectangle, a.Side, a.WidthPercent, ctx.Gaps)
+	reserved := layout.Insets{}
+	if ctx.MonitorReserved != nil {
+		if insets, ok := ctx.MonitorReserved[monitor.Name]; ok {
+			reserved = insets
+		}
+	}
+	_, dock := layout.SplitSidecar(monitor.Rectangle, a.Side, a.WidthPercent, ctx.Gaps, reserved)
 	if layout.ApproximatelyEqual(target.Geometry, dock, ctx.TolerancePx) {
 		if ctx.Logger != nil {
 			ctx.Logger.Infof("rule %s skipped (idempotent)", ctx.RuleName)

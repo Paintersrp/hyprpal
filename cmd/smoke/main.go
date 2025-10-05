@@ -79,7 +79,7 @@ func main() {
 	eng := engine.New(client, logger, modes, true, cfg.RedactTitles, layout.Gaps{
 		Inner: cfg.Gaps.Inner,
 		Outer: cfg.Gaps.Outer,
-	}, cfg.TolerancePx)
+	}, cfg.TolerancePx, cfg.ManualReserved)
 
 	if *mode != "" {
 		if err := eng.SetMode(*mode); err != nil {

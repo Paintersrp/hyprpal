@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/hyprpal/hyprpal/internal/layout"
 )
 
 func TestProfilesDuplicateDetection(t *testing.T) {
@@ -70,10 +72,31 @@ func TestValidateProfileDefinition(t *testing.T) {
 				}},
 			}},
 		}},
+		ManualReserved: map[string]layout.Insets{"*": {}},
 	}
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestValidateManualReservedRejectsNegative(t *testing.T) {
+	cfg := Config{
+		Modes: []ModeConfig{{
+			Name: "Test",
+			Rules: []RuleConfig{{
+				Name:    "Rule",
+				When:    PredicateConfig{Mode: "Test"},
+				Actions: []ActionConfig{{Type: "layout.fullscreen"}},
+			}},
+		}},
+		ManualReserved: map[string]layout.Insets{
+			"DP-1": {Top: -5},
+		},
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected validation error for negative manualReserved values")
 	}
 }
 

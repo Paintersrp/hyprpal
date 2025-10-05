@@ -8,6 +8,14 @@ gaps:
   inner: 8  # pixels between floating windows
   outer: 20 # pixels around monitor edges
 tolerancePx: 2.0 # slack for idempotence checks; set 0 for exact matches
+manualReserved:
+  "*":
+    top: 0    # defaults applied to all monitors unless overridden below
+    right: 0
+    bottom: 0
+    left: 0
+  "DP-1":
+    top: 40   # override Hyprland-provided reserved areas (per monitor)
 profiles:
   commsDock:
     anyClass: [Slack, discord]

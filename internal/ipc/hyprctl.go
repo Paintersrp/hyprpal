@@ -133,12 +133,13 @@ func (c *Client) ListMonitors(ctx context.Context) ([]state.Monitor, error) {
 		return nil, err
 	}
 	var raw []struct {
-		ID              int     `json:"id"`
-		Name            string  `json:"name"`
-		X               float64 `json:"x"`
-		Y               float64 `json:"y"`
-		Width           float64 `json:"width"`
-		Height          float64 `json:"height"`
+		ID              int       `json:"id"`
+		Name            string    `json:"name"`
+		X               float64   `json:"x"`
+		Y               float64   `json:"y"`
+		Width           float64   `json:"width"`
+		Height          float64   `json:"height"`
+		Reserved        []float64 `json:"reserved"`
 		ActiveWorkspace struct {
 			ID int `json:"id"`
 		} `json:"activeWorkspace"`
@@ -155,6 +156,7 @@ func (c *Client) ListMonitors(ctx context.Context) ([]state.Monitor, error) {
 			ID:                 m.ID,
 			Name:               m.Name,
 			Rectangle:          layout.Rect{X: m.X, Y: m.Y, Width: m.Width, Height: m.Height},
+			Reserved:           layout.InsetsFromSlice(m.Reserved),
 			ActiveWorkspaceID:  m.ActiveWorkspace.ID,
 			FocusedWorkspaceID: m.FocusedWorkspace.ID,
 		})

@@ -101,7 +101,7 @@ func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 			Debounce: time.Second,
 		}},
 	}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 	key := mode.Name + ":" + mode.Rules[0].Name
 	eng.debounce[key] = time.Now()
 
@@ -133,7 +133,7 @@ func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: actPlan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("first reconcileAndApply returned error: %v", err)
@@ -172,7 +172,7 @@ func TestReconcileUsesBatchDispatcherWhenAvailable(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)
@@ -203,7 +203,7 @@ func TestRuleExecutionTrackingAllowsNormalFlow(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)
@@ -231,7 +231,7 @@ func TestRuleExecutionTrackingBelowThreshold(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 	key := mode.Name + ":" + rule.Name
 
 	for i := 0; i < ruleBurstThreshold; i++ {
@@ -264,7 +264,7 @@ func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
 		Actions: []rules.Action{stubAction{plan: plan}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 	key := mode.Name + ":" + rule.Name
 
 	for i := 0; i < ruleBurstThreshold; i++ {
@@ -321,7 +321,7 @@ func TestTraceLoggingDryRunSequence(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelTrace, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, true, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, true, false, layout.Gaps{}, 2, nil)
 	eng.mu.Lock()
 	eng.lastWorld = baseWorld
 	eng.mu.Unlock()
@@ -421,7 +421,7 @@ func TestRedactTitlesToggle(t *testing.T) {
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
 	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2)
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("reconcileAndApply returned error: %v", err)
@@ -458,6 +458,48 @@ func TestRedactTitlesToggle(t *testing.T) {
 	}
 	if hypr.clients[0].Title != secretTitle {
 		t.Fatalf("expected source client title to remain %q, got %q", secretTitle, hypr.clients[0].Title)
+	}
+}
+
+func TestCombineMonitorInsetsAppliesManualOverrides(t *testing.T) {
+	hypr := &fakeHyprctl{}
+	logger := util.NewLogger(util.LevelInfo)
+	manual := map[string]layout.Insets{
+		"DP-2": {Right: 40},
+		"*":    {Top: 5},
+	}
+	eng := New(hypr, logger, nil, false, false, layout.Gaps{}, 2, manual)
+
+	monitors := []state.Monitor{
+		{Name: "DP-1", Reserved: layout.Insets{Left: 10}},
+		{Name: "DP-2", Reserved: layout.Insets{Top: 1}},
+	}
+
+	combined := eng.combineMonitorInsets(monitors)
+	if len(combined) != 2 {
+		t.Fatalf("expected 2 combined insets, got %d", len(combined))
+	}
+	if got := combined["DP-1"]; got != manual["*"] {
+		t.Fatalf("expected wildcard override for DP-1, got %+v", got)
+	}
+	if got := combined["DP-2"]; got != manual["DP-2"] {
+		t.Fatalf("expected explicit override for DP-2, got %+v", got)
+	}
+}
+
+func TestCombineMonitorInsetsFallsBackToHyprReserved(t *testing.T) {
+	hypr := &fakeHyprctl{}
+	logger := util.NewLogger(util.LevelInfo)
+	eng := New(hypr, logger, nil, false, false, layout.Gaps{}, 2, nil)
+
+	monitors := []state.Monitor{
+		{Name: "DP-1", Reserved: layout.Insets{Left: 10, Right: 20}},
+	}
+
+	combined := eng.combineMonitorInsets(monitors)
+	expected := layout.Insets{Left: 10, Right: 20}
+	if got := combined["DP-1"]; got != expected {
+		t.Fatalf("expected hypr reserved inset to propagate, got %+v", got)
 	}
 }
 

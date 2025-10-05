@@ -27,13 +27,14 @@ type Engine struct {
 	hyprctl hyprctlClient
 	logger  *util.Logger
 
-	modes        map[string]rules.Mode
-	modeOrder    []string
-	activeMode   string
-	dryRun       bool
-	redactTitles bool
-	gaps         layout.Gaps
-	tolerancePx  float64
+	modes          map[string]rules.Mode
+	modeOrder      []string
+	activeMode     string
+	dryRun         bool
+	redactTitles   bool
+	gaps           layout.Gaps
+	tolerancePx    float64
+	manualReserved map[string]layout.Insets
 
 	mu          sync.Mutex
 	debounce    map[string]time.Time
@@ -83,7 +84,7 @@ type ruleCheckHistory struct {
 }
 
 // New creates a new engine instance.
-func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool, gaps layout.Gaps, tolerancePx float64) *Engine {
+func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool, gaps layout.Gaps, tolerancePx float64, manualReserved map[string]layout.Insets) *Engine {
 	modeMap := make(map[string]rules.Mode)
 	order := make([]string, 0, len(modes))
 	for _, m := range modes {
@@ -95,20 +96,21 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		active = order[0]
 	}
 	return &Engine{
-		hyprctl:      hyprctl,
-		logger:       logger,
-		modes:        modeMap,
-		modeOrder:    order,
-		activeMode:   active,
-		dryRun:       dryRun,
-		redactTitles: redactTitles,
-		gaps:         gaps,
-		tolerancePx:  tolerancePx,
-		debounce:     make(map[string]time.Time),
-		cooldown:     make(map[string]time.Time),
-		execHistory:  make(map[string][]time.Time),
-		evalLog:      newEvaluationLog(0),
-		ruleChecks:   newRuleCheckHistory(0),
+		hyprctl:        hyprctl,
+		logger:         logger,
+		modes:          modeMap,
+		modeOrder:      order,
+		activeMode:     active,
+		dryRun:         dryRun,
+		redactTitles:   redactTitles,
+		gaps:           gaps,
+		tolerancePx:    tolerancePx,
+		manualReserved: cloneInsetsMap(manualReserved),
+		debounce:       make(map[string]time.Time),
+		cooldown:       make(map[string]time.Time),
+		execHistory:    make(map[string][]time.Time),
+		evalLog:        newEvaluationLog(0),
+		ruleChecks:     newRuleCheckHistory(0),
 	}
 }
 
@@ -179,6 +181,13 @@ func (e *Engine) SetLayoutParameters(gaps layout.Gaps, tolerance float64) {
 	e.mu.Lock()
 	e.gaps = gaps
 	e.tolerancePx = tolerance
+	e.mu.Unlock()
+}
+
+// SetManualReserved replaces the manual monitor insets map.
+func (e *Engine) SetManualReserved(manual map[string]layout.Insets) {
+	e.mu.Lock()
+	e.manualReserved = cloneInsetsMap(manual)
 	e.mu.Unlock()
 }
 
@@ -385,6 +394,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 
 	var plan layout.Plan
 	planned := make([]plannedRule, 0, len(mode.Rules))
+	monitorInsets := e.combineMonitorInsets(world.Monitors)
 	evalCtx := rules.EvalContext{Mode: activeMode, World: world}
 	for _, rule := range mode.Rules {
 		key := activeMode + ":" + rule.Name
@@ -438,6 +448,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				AllowUnmanaged:    rule.AllowUnmanaged,
 				Gaps:              gaps,
 				TolerancePx:       tolerance,
+				MonitorReserved:   monitorInsets,
 			})
 			if err != nil {
 				e.logger.Errorf("rule %s action error: %v", rule.Name, err)
@@ -477,6 +488,32 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 		e.recordRuleCheck(record)
 	}
 	return plan, planned
+}
+
+func (e *Engine) combineMonitorInsets(monitors []state.Monitor) map[string]layout.Insets {
+	result := make(map[string]layout.Insets, len(monitors))
+	e.mu.Lock()
+	manual := cloneInsetsMap(e.manualReserved)
+	e.mu.Unlock()
+	wildcard, wildcardOK := manual["*"]
+	emptyWildcard, emptyOK := manual[""]
+	for _, mon := range monitors {
+		insets := mon.Reserved
+		if manual != nil {
+			if override, ok := manual[mon.Name]; ok {
+				insets = override
+			} else if wildcardOK {
+				insets = wildcard
+			} else if emptyOK {
+				insets = emptyWildcard
+			}
+		}
+		result[mon.Name] = insets
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func newRuleCheckHistory(limit int) *ruleCheckHistory {
@@ -528,6 +565,17 @@ func cloneRuleCheckRecord(record RuleCheckRecord) RuleCheckRecord {
 		cloned.Predicate = rules.ClonePredicateTrace(record.Predicate)
 	}
 	return cloned
+}
+
+func cloneInsetsMap(src map[string]layout.Insets) map[string]layout.Insets {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]layout.Insets, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (e *Engine) recordRuleCheck(record RuleCheckRecord) {
