@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -42,8 +41,15 @@ func main() {
 
 	logger := util.NewLogger(util.ParseLogLevel(*logLevel))
 
-	cfg, err := config.Load(*cfgPath)
+	rawCfg, err := os.ReadFile(*cfgPath)
 	if err != nil {
+		exitErr(fmt.Errorf("load config: %w", fmt.Errorf("read config: %w", err)))
+	}
+	cfg, err := config.Parse(rawCfg)
+	if err != nil {
+		exitErr(fmt.Errorf("load config: %w", err))
+	}
+	if err := cfg.Validate(); err != nil {
 		exitErr(fmt.Errorf("load config: %w", err))
 	}
 	modes, err := rules.BuildModes(cfg)
@@ -91,30 +97,9 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
+	reloader := newConfigReloader(*cfgPath, logger, eng, cfg, rawCfg)
 	reload := func(reason string) error {
-		logger.Infof("%s, reloading config", reason)
-		cfg, err := config.Load(*cfgPath)
-		if err != nil {
-			return fmt.Errorf("load config: %w", err)
-		}
-		modes, err := rules.BuildModes(cfg)
-		if err != nil {
-			return fmt.Errorf("compile rules: %w", err)
-		}
-		eng.ReloadModes(modes)
-		eng.SetRedactTitles(cfg.RedactTitles)
-		eng.SetLayoutParameters(layout.Gaps{
-			Inner: cfg.Gaps.Inner,
-			Outer: cfg.Gaps.Outer,
-		}, cfg.TolerancePx)
-		eng.SetManualReserved(cfg.ManualReserved)
-		if err := eng.Reconcile(ctx); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return fmt.Errorf("reconcile after reload: %w", err)
-		}
-		return nil
+		return reloader.Reload(ctx, reason)
 	}
 
 	ctrlSrv, err := control.NewServer(eng, logger, reload)
