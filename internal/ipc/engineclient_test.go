@@ -68,8 +68,10 @@ func TestNewEngineClientSocketStrategy(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	expected := []string{
+		"begin",
 		"dispatch focuswindow address:test",
 		"dispatch movewindowpixel exact 0 0",
+		"commit",
 	}
 	if !reflect.DeepEqual(lines, expected) {
 		t.Fatalf("unexpected payload: %#v", lines)
