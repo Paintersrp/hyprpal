@@ -204,10 +204,10 @@ Pair `--log-level=trace` with `--dry-run` to audition rules without moving windo
 `make bench` wraps `go run ./cmd/bench --config configs/example.yaml --fixture fixtures/coding.json --iterations 25` to
 replay the synthetic Coding-mode fixture and capture latency/allocation stats. The command prints a JSON payload by default;
 pipe to `jq '.summary'` for the aggregated metrics that feed the table below or pass `--output bench.json` to save the full
-report for later comparison. Fixtures can be expressed as JSON snapshots (see `fixtures/coding.json`) **or** plain event logs
-containing `kind>>payload` lines; in the latter case the base world snapshot from the JSON fixture is reused. Use
-`--respect-delays` to honor any `delay` strings captured in the fixture, and `--mode` to force a particular rule mode when the
-recorded stream did not specify one. Pass `PROFILE=1` to emit CPU/heap profiles in `docs/flamegraphs/` (see
+report for later comparison. Add `--human` to mirror the key numbers in a tabular summary directly in the terminal. Fixtures can
+be expressed as JSON snapshots (see `fixtures/coding.json`) **or** plain event logs containing `kind>>payload` lines; in the
+latter case the base world snapshot from the JSON fixture is reused. Use `--respect-delays` to honor any `delay` strings
+captured in the fixture, and `--mode` to force a particular rule mode when the recorded stream did not specify one. Pass `PROFILE=1` to emit CPU/heap profiles in `docs/flamegraphs/` (see
 [docs/perf.md](docs/perf.md) for the exact workflow plus instructions for replaying your own capture).
 
 The summary payload now includes `heapAllocDeltaBytes`/`heapObjectsDelta` alongside the existing allocation counters so you can

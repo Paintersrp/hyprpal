@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/config"
@@ -172,6 +173,7 @@ func main() {
 	logLevel := flag.String("log-level", "warn", "log level (trace|debug|info|warn|error)")
 	respectDelays := flag.Bool("respect-delays", false, "sleep for event delays declared in the fixture")
 	outputPath := flag.String("output", "-", "write JSON report to file ('-' for stdout)")
+	humanSummary := flag.Bool("human", false, "print a tabular summary alongside the JSON output")
 	flag.Parse()
 
 	if *iterations <= 0 {
@@ -289,6 +291,12 @@ func main() {
 	report := buildReport(fixture, activeMode, *iterations, durations, totalDispatches, startMem, endMem)
 	if err := writeReport(report, *outputPath); err != nil {
 		exitErr(fmt.Errorf("encode report: %w", err))
+	}
+
+	if *humanSummary {
+		if err := printHumanSummary(report.Summary, os.Stdout); err != nil {
+			exitErr(fmt.Errorf("print human summary: %w", err))
+		}
 	}
 }
 
@@ -409,6 +417,72 @@ func writeReport(report benchReport, outputPath string) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(report)
+}
+
+func printHumanSummary(summary benchSummary, w io.Writer) error {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintf(tw, "Fixture:\t%s\n", summary.Fixture); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Mode:\t%s\n", fallback(summary.Mode, "(default)")); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Iterations:\t%d\n", summary.Iterations); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Events/iteration:\t%d\n", summary.EventsPerIteration); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Total events:\t%d\n", summary.TotalEvents); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Dispatches:\t%d (%.2f / iter, %.2f / event)\n", summary.Dispatches.Total, summary.Dispatches.PerIteration, summary.Dispatches.PerEvent); err != nil {
+		return err
+	}
+	latency := summary.Latency
+	if _, err := fmt.Fprintf(tw, "Latency (ms):\tmin %.2f | mean %.2f | median %.2f | p95 %.2f | max %.2f\n", latency.Min, latency.Mean, latency.Median, latency.P95, latency.Max); err != nil {
+		return err
+	}
+	allocs := summary.Allocations
+	if _, err := fmt.Fprintf(tw, "Allocations:\t%d total (%.2f / event)\n", allocs.Total, allocs.PerEvent); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Bytes allocated:\t%s (%.2f / event)\n", formatBytesUnsigned(allocs.BytesTotal), allocs.BytesPerEvent); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Heap delta:\t%s change, %d objects (%.2f / event)\n", formatBytesSigned(allocs.HeapAllocDelta), allocs.HeapObjectsDelta, allocs.HeapObjectsPerEvent); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Events/sec:\t%.2f\n", summary.EventsPerSecond); err != nil {
+		return err
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func formatBytesUnsigned(bytes uint64) string {
+	const miB = 1024 * 1024
+	if bytes == 0 {
+		return "0 B (0.00 MiB)"
+	}
+	return fmt.Sprintf("%d B (%.2f MiB)", bytes, float64(bytes)/float64(miB))
+}
+
+func formatBytesSigned(delta int64) string {
+	if delta == 0 {
+		return "0 B (0.00 MiB)"
+	}
+	sign := ""
+	if delta < 0 {
+		sign = "-"
+		delta = -delta
+	}
+	return fmt.Sprintf("%s%s", sign, formatBytesUnsigned(uint64(delta)))
 }
 
 func eventsPerSecond(total time.Duration, events int) float64 {
