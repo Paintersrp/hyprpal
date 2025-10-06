@@ -24,12 +24,12 @@ smoke:
         go run ./cmd/smoke --config configs/example.yaml
 
 bench:
-        if [ "$(PROFILE)" = "1" ]; then \
-                mkdir -p docs/flamegraphs; \
-                go run ./cmd/bench --config configs/example.yaml --fixture fixtures/coding.json --iterations 25 --cpu-profile docs/flamegraphs/v0.5-bench-cpu.pb.gz --mem-profile docs/flamegraphs/v0.5-bench-heap.pb.gz; \
-        else \
-                go run ./cmd/bench --config configs/example.yaml --fixture fixtures/coding.json --iterations 25; \
-        fi
+	if [ "$(PROFILE)" = "1" ]; then \
+		mkdir -p docs/flamegraphs; \
+		go run ./cmd/bench --config configs/example.yaml --fixture fixtures/coding.json --iterations 25 --warmup 3 --cpu-profile docs/flamegraphs/v0.5-bench-cpu.pb.gz --mem-profile docs/flamegraphs/v0.5-bench-heap.pb.gz; \
+	else \
+		go run ./cmd/bench --config configs/example.yaml --fixture fixtures/coding.json --iterations 25 --warmup 3; \
+	fi
 
 install:
         mkdir -p $(INSTALL_DIR)

@@ -106,6 +106,7 @@ func TestPrintHumanSummary(t *testing.T) {
 		Fixture:            "test",
 		Mode:               "Coding",
 		Iterations:         2,
+		WarmupIterations:   1,
 		EventsPerIteration: 3,
 		TotalEvents:        6,
 		Dispatches: benchDispatchStats{
@@ -149,6 +150,7 @@ func TestPrintHumanSummary(t *testing.T) {
 		"Fixture:                  test",
 		"Mode:                     Coding",
 		"Dispatches:               12 (6.00 / iter, 2.00 / event)",
+		"Warmup iterations:        1",
 		"Latency (ms):             min 1.00 | mean 2.00 | median 1.50 | p95 3.50 | max 4.00",
 		"Iteration duration (ms):  min 10.00 | mean 12.50 | median 15.00 | p95 18.00 | max 20.00",
 		"Allocations:              120 total (20.00 / event)",
@@ -158,6 +160,25 @@ func TestPrintHumanSummary(t *testing.T) {
 		if !strings.Contains(output, c) {
 			t.Fatalf("expected summary to contain %q, got:\n%s", c, output)
 		}
+	}
+}
+
+func TestBuildReportIncludesWarmup(t *testing.T) {
+	report := buildReport(
+		benchFixture{Name: "fixture", Events: []benchEvent{{}}},
+		"Coding",
+		2,
+		3,
+		[]time.Duration{time.Millisecond},
+		[]time.Duration{2 * time.Millisecond},
+		[]int{4},
+		4,
+		runtime.MemStats{},
+		runtime.MemStats{},
+	)
+
+	if report.Summary.WarmupIterations != 3 {
+		t.Fatalf("expected warmup to be 3, got %d", report.Summary.WarmupIterations)
 	}
 }
 
@@ -322,7 +343,7 @@ func TestBuildReport(t *testing.T) {
 	iterationDurations := []time.Duration{10 * time.Millisecond, 12 * time.Millisecond}
 	iterationDispatches := []int{5, 3}
 
-	report := buildReport(fixture, "Coding", 2, durations, iterationDurations, iterationDispatches, 8, start, end)
+	report := buildReport(fixture, "Coding", 2, 0, durations, iterationDurations, iterationDispatches, 8, start, end)
 	summary := report.Summary
 
 	if summary.TotalEvents != 4 {
@@ -336,6 +357,9 @@ func TestBuildReport(t *testing.T) {
 	}
 	if math.Abs(summary.Allocations.PerEvent-125) > 1e-9 {
 		t.Fatalf("Allocations.PerEvent = %f, want 125", summary.Allocations.PerEvent)
+	}
+	if summary.WarmupIterations != 0 {
+		t.Fatalf("WarmupIterations = %d, want 0", summary.WarmupIterations)
 	}
 	if math.Abs(summary.Allocations.BytesPerEvent-1024) > 1e-9 {
 		t.Fatalf("Allocations.BytesPerEvent = %f, want 1024", summary.Allocations.BytesPerEvent)
