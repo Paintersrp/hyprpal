@@ -69,7 +69,9 @@ comparing multiple runs interactively.
 
 `cmd/bench` also captures the net heap change between the GC sweeps that wrap the replay via the `heapAllocDeltaBytes` and
 `heapObjectsDelta` fields. In v0.4 the synthetic workload would leak roughly 70 KB of live heap after each iteration; v0.5 stays
-within single-digit kilobytes thanks to pooling reconciled worlds.
+within single-digit kilobytes thanks to pooling reconciled worlds. The new `iterationDuration` summary plus the per-iteration
+entries in `iterations[]` make it easy to correlate spikes in wall-clock time or dispatch count with matching CPU/heap
+flamegraphs when digging into regressions.
 
 ## What changed in v0.5
 

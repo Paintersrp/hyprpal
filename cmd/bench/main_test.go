@@ -119,6 +119,13 @@ func TestPrintHumanSummary(t *testing.T) {
 			P95:    3.5,
 			Max:    4.0,
 		},
+		IterationDuration: benchLatencyStats{
+			Min:    10.0,
+			Mean:   12.5,
+			Median: 15.0,
+			P95:    18.0,
+			Max:    20.0,
+		},
 		Allocations: benchAllocationStats{
 			Total:               120,
 			PerEvent:            20,
@@ -138,12 +145,13 @@ func TestPrintHumanSummary(t *testing.T) {
 
 	output := buf.String()
 	checks := []string{
-		"Fixture:           test",
-		"Mode:              Coding",
-		"Dispatches:        12 (6.00 / iter, 2.00 / event)",
-		"Latency (ms):      min 1.00 | mean 2.00 | median 1.50 | p95 3.50 | max 4.00",
-		"Allocations:       120 total (20.00 / event)",
-		"Heap delta:        1024 B (0.00 MiB) change, 12 objects (2.00 / event)",
+		"Fixture:                  test",
+		"Mode:                     Coding",
+		"Dispatches:               12 (6.00 / iter, 2.00 / event)",
+		"Latency (ms):             min 1.00 | mean 2.00 | median 1.50 | p95 3.50 | max 4.00",
+		"Iteration duration (ms):  min 10.00 | mean 12.50 | median 15.00 | p95 18.00 | max 20.00",
+		"Allocations:              120 total (20.00 / event)",
+		"Heap delta:               1024 B (0.00 MiB) change, 12 objects (2.00 / event)",
 	}
 	for _, c := range checks {
 		if !strings.Contains(output, c) {
@@ -177,8 +185,11 @@ func TestBuildReport(t *testing.T) {
 	}
 	start := runtime.MemStats{Mallocs: 1000, TotalAlloc: 4096, HeapAlloc: 2048, HeapObjects: 200}
 	end := runtime.MemStats{Mallocs: 1500, TotalAlloc: 8192, HeapAlloc: 3072, HeapObjects: 260}
+	iterationDurations := []time.Duration{10 * time.Millisecond, 12 * time.Millisecond}
+	iterationDispatches := []int{5, 3}
 
-	summary := buildReport(fixture, "Coding", 2, durations, 8, start, end).Summary
+	report := buildReport(fixture, "Coding", 2, durations, iterationDurations, iterationDispatches, 8, start, end)
+	summary := report.Summary
 
 	if summary.TotalEvents != 4 {
 		t.Fatalf("TotalEvents = %d, want 4", summary.TotalEvents)
@@ -209,6 +220,25 @@ func TestBuildReport(t *testing.T) {
 	}
 	if math.Abs(summary.Allocations.HeapObjectsPerEvent-15) > 1e-9 {
 		t.Fatalf("Allocations.HeapObjectsPerEvent = %f, want 15", summary.Allocations.HeapObjectsPerEvent)
+	}
+	if math.Abs(summary.IterationDuration.Mean-11) > 1e-9 {
+		t.Fatalf("IterationDuration.Mean = %f, want 11", summary.IterationDuration.Mean)
+	}
+	if summary.IterationDuration.Min != 10 {
+		t.Fatalf("IterationDuration.Min = %f, want 10", summary.IterationDuration.Min)
+	}
+	if summary.IterationDuration.Max != 12 {
+		t.Fatalf("IterationDuration.Max = %f, want 12", summary.IterationDuration.Max)
+	}
+	if len(report.Iterations) != 2 {
+		t.Fatalf("expected 2 iteration entries, got %d", len(report.Iterations))
+	}
+	iter := report.Iterations[0]
+	if iter.Index != 1 || iter.Dispatches != 5 || iter.Events != len(fixture.Events) {
+		t.Fatalf("unexpected first iteration summary: %+v", iter)
+	}
+	if math.Abs(iter.DurationMs-10) > 1e-9 {
+		t.Fatalf("expected first iteration duration 10ms, got %f", iter.DurationMs)
 	}
 }
 
