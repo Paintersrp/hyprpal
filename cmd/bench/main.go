@@ -82,14 +82,23 @@ type benchSummary struct {
 	TotalEvents        int                  `json:"totalEvents"`
 	Dispatches         benchDispatchStats   `json:"dispatches"`
 	Latency            benchLatencyStats    `json:"latency"`
+	IterationDuration  benchLatencyStats    `json:"iterationDuration"`
 	Allocations        benchAllocationStats `json:"allocations"`
 	TotalDurationMs    float64              `json:"totalDurationMs"`
 	EventsPerSecond    float64              `json:"eventsPerSecond"`
 }
 
 type benchReport struct {
-	Summary     benchSummary `json:"summary"`
-	DurationsMs []float64    `json:"durationsMs"`
+	Summary     benchSummary     `json:"summary"`
+	DurationsMs []float64        `json:"durationsMs"`
+	Iterations  []benchIteration `json:"iterations,omitempty"`
+}
+
+type benchIteration struct {
+	Index      int     `json:"index"`
+	DurationMs float64 `json:"durationMs"`
+	Dispatches int     `json:"dispatches"`
+	Events     int     `json:"events"`
 }
 
 type benchHyprctl struct {
@@ -237,11 +246,14 @@ func main() {
 	runtime.ReadMemStats(&startMem)
 
 	durations := make([]time.Duration, 0, len(fixture.Events)*(*iterations))
+	iterationDurations := make([]time.Duration, 0, *iterations)
+	iterationDispatches := make([]int, 0, *iterations)
 	totalDispatches := 0
 
 	ctx := context.Background()
 
 	for i := 0; i < *iterations; i++ {
+		iterationStart := time.Now()
 		hypr := fixture.newHyprctl()
 		eng := engine.New(hypr, logger, modes, false, cfg.RedactTitles, layout.Gaps{
 			Inner: cfg.Gaps.Inner,
@@ -269,7 +281,11 @@ func main() {
 			durations = append(durations, time.Since(start))
 		}
 
-		totalDispatches += hypr.Dispatches()
+		iterationDuration := time.Since(iterationStart)
+		iterationDurations = append(iterationDurations, iterationDuration)
+		dispatchCount := hypr.Dispatches()
+		iterationDispatches = append(iterationDispatches, dispatchCount)
+		totalDispatches += dispatchCount
 	}
 
 	runtime.GC()
@@ -288,7 +304,7 @@ func main() {
 		}
 	}
 
-	report := buildReport(fixture, activeMode, *iterations, durations, totalDispatches, startMem, endMem)
+	report := buildReport(fixture, activeMode, *iterations, durations, iterationDurations, iterationDispatches, totalDispatches, startMem, endMem)
 	if err := writeReport(report, *outputPath); err != nil {
 		exitErr(fmt.Errorf("encode report: %w", err))
 	}
@@ -300,26 +316,10 @@ func main() {
 	}
 }
 
-func buildReport(fixture benchFixture, mode string, iterations int, durations []time.Duration, dispatches int, start, end runtime.MemStats) benchReport {
+func buildReport(fixture benchFixture, mode string, iterations int, durations []time.Duration, iterationDurations []time.Duration, iterationDispatches []int, dispatches int, start, end runtime.MemStats) benchReport {
 	totalEvents := len(fixture.Events) * iterations
-	var total time.Duration
-	for _, d := range durations {
-		total += d
-	}
-	avg := time.Duration(0)
-	if len(durations) > 0 {
-		avg = total / time.Duration(len(durations))
-	}
-	sorted := append([]time.Duration(nil), durations...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	p50 := percentile(sorted, 0.50)
-	p95 := percentile(sorted, 0.95)
-	min := time.Duration(0)
-	max := time.Duration(0)
-	if len(sorted) > 0 {
-		min = sorted[0]
-		max = sorted[len(sorted)-1]
-	}
+	latencyStats, totalEventDuration := buildLatencyStats(durations)
+	iterationStats, _ := buildLatencyStats(iterationDurations)
 
 	allocs := end.Mallocs - start.Mallocs
 	allocsPerEvent := float64(allocs)
@@ -348,6 +348,20 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 		durationsMs[i] = toMillis(d)
 	}
 
+	iterationsData := make([]benchIteration, 0, len(iterationDurations))
+	for i, d := range iterationDurations {
+		dispatchCount := 0
+		if i < len(iterationDispatches) {
+			dispatchCount = iterationDispatches[i]
+		}
+		iterationsData = append(iterationsData, benchIteration{
+			Index:      i + 1,
+			DurationMs: toMillis(d),
+			Dispatches: dispatchCount,
+			Events:     len(fixture.Events),
+		})
+	}
+
 	summary := benchSummary{
 		Fixture:            fixture.Name,
 		Mode:               mode,
@@ -359,13 +373,8 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 			PerIteration: safeDivide(dispatches, iterations),
 			PerEvent:     safeDivide(dispatches, totalEvents),
 		},
-		Latency: benchLatencyStats{
-			Min:    toMillis(min),
-			Mean:   toMillis(avg),
-			Median: toMillis(p50),
-			P95:    toMillis(p95),
-			Max:    toMillis(max),
-		},
+		Latency:           latencyStats,
+		IterationDuration: iterationStats,
 		Allocations: benchAllocationStats{
 			Total:               allocs,
 			PerEvent:            allocsPerEvent,
@@ -382,11 +391,34 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 			HeapObjectsDelta:    heapObjectsDelta,
 			HeapObjectsPerEvent: heapObjectsPerEvent,
 		},
-		TotalDurationMs: toMillis(total),
-		EventsPerSecond: eventsPerSecond(total, totalEvents),
+		TotalDurationMs: toMillis(totalEventDuration),
+		EventsPerSecond: eventsPerSecond(totalEventDuration, totalEvents),
 	}
 
-	return benchReport{Summary: summary, DurationsMs: durationsMs}
+	return benchReport{Summary: summary, DurationsMs: durationsMs, Iterations: iterationsData}
+}
+
+func buildLatencyStats(durations []time.Duration) (benchLatencyStats, time.Duration) {
+	stats := benchLatencyStats{}
+	if len(durations) == 0 {
+		return stats, 0
+	}
+	total := time.Duration(0)
+	for _, d := range durations {
+		total += d
+	}
+	mean := time.Duration(0)
+	if len(durations) > 0 {
+		mean = total / time.Duration(len(durations))
+	}
+	sorted := append([]time.Duration(nil), durations...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	stats.Min = toMillis(sorted[0])
+	stats.Mean = toMillis(mean)
+	stats.Median = toMillis(percentile(sorted, 0.50))
+	stats.P95 = toMillis(percentile(sorted, 0.95))
+	stats.Max = toMillis(sorted[len(sorted)-1])
+	return stats, total
 }
 
 func safeDivide(total int, count int) float64 {
@@ -441,6 +473,10 @@ func printHumanSummary(summary benchSummary, w io.Writer) error {
 	}
 	latency := summary.Latency
 	if _, err := fmt.Fprintf(tw, "Latency (ms):\tmin %.2f | mean %.2f | median %.2f | p95 %.2f | max %.2f\n", latency.Min, latency.Mean, latency.Median, latency.P95, latency.Max); err != nil {
+		return err
+	}
+	iterationLatency := summary.IterationDuration
+	if _, err := fmt.Fprintf(tw, "Iteration duration (ms):\tmin %.2f | mean %.2f | median %.2f | p95 %.2f | max %.2f\n", iterationLatency.Min, iterationLatency.Mean, iterationLatency.Median, iterationLatency.P95, iterationLatency.Max); err != nil {
 		return err
 	}
 	allocs := summary.Allocations
