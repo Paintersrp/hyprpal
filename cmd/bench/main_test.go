@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
@@ -157,6 +158,44 @@ func TestPrintHumanSummary(t *testing.T) {
 		if !strings.Contains(output, c) {
 			t.Fatalf("expected summary to contain %q, got:\n%s", c, output)
 		}
+	}
+}
+
+func TestWriteEventTrace(t *testing.T) {
+	if err := writeEventTrace(nil, ""); err != nil {
+		t.Fatalf("writeEventTrace with empty path returned error: %v", err)
+	}
+
+	traces := []benchEventTrace{{
+		Iteration:  1,
+		EventIndex: 2,
+		Kind:       "openwindow",
+		Payload:    "0x123, payload",
+		DurationMs: 1.25,
+		Dispatches: 3,
+	}}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "trace.json")
+	if err := writeEventTrace(traces, path); err != nil {
+		t.Fatalf("writeEventTrace returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+
+	var decoded []benchEventTrace
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal trace: %v", err)
+	}
+
+	if len(decoded) != len(traces) {
+		t.Fatalf("decoded length = %d, want %d", len(decoded), len(traces))
+	}
+	if decoded[0] != traces[0] {
+		t.Fatalf("decoded trace mismatch: %+v vs %+v", decoded[0], traces[0])
 	}
 }
 

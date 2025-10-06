@@ -42,6 +42,7 @@ PROFILE=1 go run ./cmd/bench \
   --fixture fixtures/coding.json \
   --iterations 25 \
   --output docs/flamegraphs/v0.5-bench.json \
+  --event-trace docs/flamegraphs/v0.5-events.json \
   --cpu-profile docs/flamegraphs/v0.5-bench-cpu.pb.gz \
   --mem-profile docs/flamegraphs/v0.5-bench-heap.pb.gz
 ```
@@ -50,7 +51,8 @@ Set `PROFILE=1` in the environment to instruct the Makefile target to add the
 `--cpu-profile`/`--mem-profile` flags. Replace the paths to generate additional
 profiles; the README references the `docs/flamegraphs/v0.5-bench-{cpu,heap}.pb.gz`
 artifacts by default. Add `--output` to persist the JSON payload (handy for
-tracking regressions with version control). Fixtures may be JSON snapshots or
+tracking regressions with version control) and `--event-trace` to mirror the raw
+per-event timings that help pinpoint spikes. Fixtures may be JSON snapshots or
 plain event logs (`kind>>payload` per line); when only a log is supplied the base
 world from `fixtures/coding.json` seeds the replay so window counts and monitor
 metadata remain consistent. Use `--respect-delays` to mirror pacing captured in
