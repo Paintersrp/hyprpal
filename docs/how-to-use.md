@@ -1,0 +1,237 @@
+# Hyprpal How-To Guide
+
+This guide walks through installing, configuring, and operating **hyprpal** in a production Wayland session. It expands on the quick start in the main README and provides detailed procedures and checklists you can follow when rolling the daemon out across machines.
+
+---
+
+## 1. Understand the Architecture
+
+Before deploying, review how the components fit together:
+
+- **hyprpal daemon** – A long-running process that subscribes to Hyprland's socket events, keeps a live world model of monitors, workspaces, and clients, and applies declarative layout rules.
+- **hsctl CLI** – A companion control tool used to inspect state, switch modes, trigger reloads, and preview planned Hyprland dispatches.
+- **smoke snapshot CLI** – A standalone helper that evaluates your configuration against the current Hyprland world without mutating windows—ideal for auditing rules.
+- **bench replay harness** – Replays captured or synthetic Hyprland events for benchmarking rule evaluation and dispatch behaviour.
+
+Each binary is built from this repository; `make build` produces them under `bin/` while `make install` installs them into `~/.local/bin` by default.
+
+---
+
+## 2. Prerequisites Checklist
+
+1. **Hyprland** is running on the host and exposes the `HYPRLAND_INSTANCE_SIGNATURE` environment variable.
+2. `hyprctl` is present on your `$PATH` and executable.
+3. Go 1.22+ is installed for building from source (`go env GOVERSION` should report 1.22 or newer).
+4. Your user has write access to `~/.config/hyprpal/` for configuration files and `~/.local/bin/` when using the default install path.
+5. Optional: Ensure `systemd --user` is available if you plan to manage the daemon through the provided unit file.
+
+Validate the prerequisites quickly:
+
+```bash
+hyprctl -j monitors >/dev/null
+which go
+systemctl --user status hyprpal.service # expect "Unit hyprpal.service could not be found" before installation
+```
+
+---
+
+## 3. Install the Binaries
+
+1. Clone the repository and move into it:
+
+   ```bash
+   git clone https://github.com/<your-org>/hyprpal.git
+   cd hyprpal
+   ```
+
+2. Build all binaries:
+
+   ```bash
+   make build
+   ```
+
+   This generates:
+   - `bin/hyprpal`
+   - `bin/hsctl`
+   - `bin/smoke`
+   - `bin/bench`
+
+3. Optional: Install them to `~/.local/bin` (override with `PREFIX=/custom/path`):
+
+   ```bash
+   make install
+   ```
+
+   Confirm the binaries resolve before proceeding:
+
+   ```bash
+   which hyprpal hsctl smoke bench
+   ```
+
+---
+
+## 4. Prepare Your Configuration
+
+1. Create the configuration directory if it does not already exist:
+
+   ```bash
+   mkdir -p ~/.config/hyprpal
+   ```
+
+2. Copy a preset as a starting point (for example, the dual-monitor layout):
+
+   ```bash
+   cp examples/dual-monitor/config.yaml ~/.config/hyprpal/config.yaml
+   ```
+
+   Each preset directory contains a README that explains its assumptions. Review and adjust monitor names, workspace IDs, gaps, and application classes so they match your environment.
+
+3. Verify YAML correctness by running the smoke CLI in dry-run mode:
+
+   ```bash
+   go run ./cmd/smoke --config ~/.config/hyprpal/config.yaml --mode Coding --explain
+   ```
+
+   The command prints the parsed configuration, captured world snapshot, and proposed dispatches. Resolve any validation errors before launching the daemon.
+
+4. (Optional) Define manual reserved insets for monitors that host bars or panels:
+
+   ```yaml
+   manualReserved:
+     "DP-1": { top: 32 }
+     "*": { bottom: 16 }
+   ```
+
+   These entries override Hyprland's own reserved values and are merged before gaps are applied.
+
+---
+
+## 5. Launch the Daemon Manually
+
+1. Start Hyprland and ensure the configuration file is in place.
+2. Run the daemon directly from the repository root or install path:
+
+   ```bash
+   hyprpal --config ~/.config/hyprpal/config.yaml --log-level info
+   ```
+
+3. Watch the logs in the foreground to confirm that Hyprland events are being consumed and rules are evaluated as expected. Use `--dry-run` to audit dispatches without mutating windows during initial validation:
+
+   ```bash
+   hyprpal --config ~/.config/hyprpal/config.yaml --dry-run --log-level debug
+   ```
+
+4. Terminate with `Ctrl+C` once satisfied or leave it running while you complete the next steps.
+
+---
+
+## 6. Manage Modes and Reloads with `hsctl`
+
+While the daemon is running:
+
+- **Inspect modes**
+  ```bash
+  hsctl mode get
+  ```
+
+- **Switch modes**
+  ```bash
+  hsctl mode set Gaming
+  ```
+
+  Mode changes trigger a world reconcile followed by rule evaluation for the new mode.
+
+- **Reload configuration**
+  ```bash
+  hsctl reload
+  ```
+
+  Use this after editing `config.yaml`; it mirrors sending `SIGHUP` to the process.
+
+- **Preview dispatches and reasons**
+  ```bash
+  hsctl plan --explain
+  ```
+
+  Empty output indicates no pending actions for the current world state.
+
+---
+
+## 7. Enable the Systemd User Service
+
+1. Install the service unit (optional `PREFIX` carries over from `make install`):
+
+   ```bash
+   make service
+   ```
+
+2. Enable and start the daemon for your user:
+
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now hyprpal.service
+   ```
+
+3. Inspect logs and status:
+
+   ```bash
+   systemctl --user status hyprpal.service
+   journalctl --user -fu hyprpal
+   ```
+
+   The service runs `hyprpal --config ~/.config/hyprpal/config.yaml` by default. Override environment variables or flags by editing the drop-in at `~/.config/systemd/user/hyprpal.service.d/override.conf`.
+
+---
+
+## 8. Validate Behaviour with Smoke and Bench
+
+- **Smoke validation** – Run `smoke` periodically to confirm that rules still match real-world data, especially after Hyprland updates or significant configuration changes.
+
+  ```bash
+  smoke --config ~/.config/hyprpal/config.yaml --mode Coding --explain
+  ```
+
+- **Benchmark changes** – Use `bench` when iterating on complex rule sets. Provide a captured fixture to replay:
+
+  ```bash
+  bench --config ~/.config/hyprpal/config.yaml \
+        --fixture fixtures/coding.json \
+        --iterations 25 \
+        --cpu-profile bench.cpu --mem-profile bench.mem
+  ```
+
+  Review the generated profiles with `go tool pprof` to catch regressions early.
+
+---
+
+## 9. Routine Operations Checklist
+
+- [ ] Keep `hyprpal`, `hsctl`, and supporting binaries up to date (`git pull && make install`).
+- [ ] Audit configuration drift monthly using `smoke`.
+- [ ] Tail logs in debug mode (`hyprpal --log-level debug`) when onboarding new rules.
+- [ ] Capture benchmark baselines before and after large rule changes.
+- [ ] Document workspace and monitor naming conventions in team runbooks.
+
+---
+
+## 10. Troubleshooting Tips
+
+| Symptom | Suggested Actions |
+| --- | --- |
+| `hyprpal` exits immediately with "hyprctl not found" | Ensure Hyprland's CLI is installed and present on `$PATH`. Confirm `which hyprctl` resolves. |
+| Rules never trigger | Verify `managedWorkspaces`, `mode` filters, and application classes in the YAML. Run `smoke --explain` to inspect predicate traces. |
+| Windows move unexpectedly or jitter | Lower `tolerancePx` and check for competing Hyprland scripts or rules. Use debug logging to identify repeated dispatches. |
+| `hsctl` cannot connect | Confirm the control socket path (`$XDG_RUNTIME_DIR/hyprpal/control.sock`). Override via `HSCTL_SOCKET` or `--socket` if running in a non-standard environment. |
+| Systemd unit fails to start | Run `journalctl --user -u hyprpal` to inspect errors. Verify the config file path and ensure the Hyprland session is active before the service starts. |
+
+---
+
+## 11. Next Steps
+
+After a successful rollout:
+
+- Integrate hyprpal startup into your login scripts or display manager session if you prefer not to use systemd.
+- Extend the configuration with custom rules—use `examples/` as inspiration and `bench` to stress-test new layouts.
+- Track enhancements and planned features in the repository's issue tracker to stay aligned with upcoming releases.
+
+For additional context, consult the main [README](../README.md) and the documentation under [`docs/`](./).
