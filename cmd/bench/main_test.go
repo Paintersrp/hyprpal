@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,6 +97,70 @@ func TestSafeDivide(t *testing.T) {
 		if math.Abs(got-tc.expected) > 1e-9 {
 			t.Fatalf("safeDivide(%d, %d) = %f, want %f", tc.total, tc.count, got, tc.expected)
 		}
+	}
+}
+
+func TestPrintHumanSummary(t *testing.T) {
+	summary := benchSummary{
+		Fixture:            "test",
+		Mode:               "Coding",
+		Iterations:         2,
+		EventsPerIteration: 3,
+		TotalEvents:        6,
+		Dispatches: benchDispatchStats{
+			Total:        12,
+			PerIteration: 6,
+			PerEvent:     2,
+		},
+		Latency: benchLatencyStats{
+			Min:    1.0,
+			Mean:   2.0,
+			Median: 1.5,
+			P95:    3.5,
+			Max:    4.0,
+		},
+		Allocations: benchAllocationStats{
+			Total:               120,
+			PerEvent:            20,
+			BytesTotal:          4096,
+			BytesPerEvent:       512,
+			HeapAllocDelta:      1024,
+			HeapObjectsDelta:    12,
+			HeapObjectsPerEvent: 2,
+		},
+		EventsPerSecond: 300,
+	}
+
+	var buf bytes.Buffer
+	if err := printHumanSummary(summary, &buf); err != nil {
+		t.Fatalf("printHumanSummary returned error: %v", err)
+	}
+
+	output := buf.String()
+	checks := []string{
+		"Fixture:           test",
+		"Mode:              Coding",
+		"Dispatches:        12 (6.00 / iter, 2.00 / event)",
+		"Latency (ms):      min 1.00 | mean 2.00 | median 1.50 | p95 3.50 | max 4.00",
+		"Allocations:       120 total (20.00 / event)",
+		"Heap delta:        1024 B (0.00 MiB) change, 12 objects (2.00 / event)",
+	}
+	for _, c := range checks {
+		if !strings.Contains(output, c) {
+			t.Fatalf("expected summary to contain %q, got:\n%s", c, output)
+		}
+	}
+}
+
+func TestFormatBytesSigned(t *testing.T) {
+	if got := formatBytesSigned(0); got != "0 B (0.00 MiB)" {
+		t.Fatalf("formatBytesSigned(0) = %q", got)
+	}
+	if got := formatBytesSigned(1024); got != "1024 B (0.00 MiB)" {
+		t.Fatalf("formatBytesSigned(1024) = %q", got)
+	}
+	if got := formatBytesSigned(-2048); got != "-2048 B (0.00 MiB)" {
+		t.Fatalf("formatBytesSigned(-2048) = %q", got)
 	}
 }
 

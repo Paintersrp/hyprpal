@@ -52,7 +52,9 @@ Repeat for the heap profile. Keep both the `.pb.gz` (raw profile) and `.svg`
 
 The numbers below are averaged over 25 iterations of the synthetic Coding-mode
 fixture. `cmd/bench` prints the summary in JSON; capture the block with
-`jq '.summary'` to mirror the table shown in the README.
+`jq '.summary'` to mirror the table shown in the README. Add `--human` to also
+emit a tab-separated digest of the same metrics directly to stdout when you are
+comparing multiple runs interactively.
 
 | Metric | v0.4 | v0.5 | Change |
 | --- | --- | --- | --- |
