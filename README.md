@@ -92,16 +92,17 @@ The `--explain` flag (enabled by default) annotates each dispatch with its `mode
 Run the harness against the default synthetic fixture (a Coding workspace with dockable comms windows) or point it at your own capture:
 
 ```bash
-# Replay the default synthetic stream 25 times
-go run ./cmd/bench --iterations 25 --config configs/example.yaml
+# Replay the default synthetic stream 25 times with three warm-up passes
+go run ./cmd/bench --iterations 25 --warmup 3 --config configs/example.yaml
 
 # Replay a custom JSON fixture with CPU/heap profiles
 go run ./cmd/bench --config ~/.config/hyprpal/config.yaml \
-  --fixture fixtures/coding.json --cpu-profile bench.cpu --mem-profile bench.mem
+  --fixture fixtures/coding.json --iterations 25 --warmup 3 \
+  --cpu-profile bench.cpu --mem-profile bench.mem
 ```
 
-Prefer a canned workflow? `make bench` replays the default fixture 25 times and
-honors `PROFILE=1 make bench` to emit CPU/heap profiles under
+Prefer a canned workflow? `make bench` replays the default fixture 25 times (with
+three warm-up passes) and honors `PROFILE=1 make bench` to emit CPU/heap profiles under
 `docs/flamegraphs/`. The [performance note](./docs/perf.md) shows the resulting
 benchmarks versus v0.4 and explains how to turn those profiles into flamegraphs.
 
@@ -113,6 +114,7 @@ The fixture supports two formats:
 Useful flags:
 
 - `--iterations` – number of times to replay the stream (default `10`).
+- `--warmup` – warm-up iterations to discard before timing begins (default `0`).
 - `--mode` – override the mode selected before the first reconcile.
 - `--respect-delays` – sleep for any `delay` values encoded in the fixture events.
 - `--cpu-profile` / `--mem-profile` – emit pprof-compatible profile files for deeper analysis.

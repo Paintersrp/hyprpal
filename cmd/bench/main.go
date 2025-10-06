@@ -80,6 +80,7 @@ type benchSummary struct {
 	Iterations         int                  `json:"iterations"`
 	EventsPerIteration int                  `json:"eventsPerIteration"`
 	TotalEvents        int                  `json:"totalEvents"`
+	WarmupIterations   int                  `json:"warmupIterations"`
 	Dispatches         benchDispatchStats   `json:"dispatches"`
 	Latency            benchLatencyStats    `json:"latency"`
 	IterationDuration  benchLatencyStats    `json:"iterationDuration"`
@@ -185,6 +186,7 @@ func main() {
 	cfgPath := flag.String("config", defaultConfig, "path to YAML config")
 	fixturePath := flag.String("fixture", defaultFixturePath, "path to replay fixture (JSON world or event log)")
 	iterations := flag.Int("iterations", 10, "number of times to replay the fixture")
+	warmup := flag.Int("warmup", 0, "number of warm-up iterations to run before timing")
 	cpuProfile := flag.String("cpu-profile", "", "write CPU profile to file")
 	memProfile := flag.String("mem-profile", "", "write heap profile to file")
 	modeFlag := flag.String("mode", "", "mode to activate before replay")
@@ -197,6 +199,10 @@ func main() {
 
 	if *iterations <= 0 {
 		fmt.Fprintln(os.Stderr, "iterations must be positive")
+		os.Exit(1)
+	}
+	if *warmup < 0 {
+		fmt.Fprintln(os.Stderr, "warmup must be zero or positive")
 		os.Exit(1)
 	}
 
@@ -253,6 +259,16 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
+	ctx := context.Background()
+
+	if *warmup > 0 {
+		for i := 0; i < *warmup; i++ {
+			if _, _, _, _, err := replayIteration(ctx, fixture, cfg, modes, logger, activeMode, *respectDelays, i+1, false, false); err != nil {
+				exitErr(fmt.Errorf("warmup iteration %d: %w", i+1, err))
+			}
+		}
+	}
+
 	runtime.GC()
 	var startMem runtime.MemStats
 	runtime.ReadMemStats(&startMem)
@@ -267,55 +283,18 @@ func main() {
 		eventTraces = make([]benchEventTrace, 0, eventsPerIteration*(*iterations))
 	}
 
-	ctx := context.Background()
-
 	for i := 0; i < *iterations; i++ {
-		iterationStart := time.Now()
-		hypr := fixture.newHyprctl()
-		eng := engine.New(hypr, logger, modes, false, cfg.RedactTitles, layout.Gaps{
-			Inner: cfg.Gaps.Inner,
-			Outer: cfg.Gaps.Outer,
-		}, cfg.TolerancePx, cfg.ManualReserved)
-
-		if activeMode != "" {
-			if err := eng.SetMode(activeMode); err != nil {
-				exitErr(fmt.Errorf("set mode %q: %w", activeMode, err))
-			}
+		iterationDuration, dispatchCount, eventDurations, traces, err := replayIteration(ctx, fixture, cfg, modes, logger, activeMode, *respectDelays, i+1, true, traceEnabled)
+		if err != nil {
+			exitErr(fmt.Errorf("iteration %d: %w", i+1, err))
 		}
-
-		if err := eng.Reconcile(ctx); err != nil {
-			exitErr(fmt.Errorf("initial reconcile: %w", err))
-		}
-
-		for idx, ev := range fixture.Events {
-			if *respectDelays && ev.Delay > 0 {
-				time.Sleep(ev.Delay)
-			}
-			beforeDispatches := hypr.Dispatches()
-			start := time.Now()
-			if err := eng.ApplyEvent(ctx, ev.Event); err != nil {
-				exitErr(fmt.Errorf("apply %s: %w", ev.Event.Kind, err))
-			}
-			elapsed := time.Since(start)
-			durations = append(durations, elapsed)
-			if traceEnabled {
-				dispatchDiff := hypr.Dispatches() - beforeDispatches
-				eventTraces = append(eventTraces, benchEventTrace{
-					Iteration:  i + 1,
-					EventIndex: idx + 1,
-					Kind:       ev.Event.Kind,
-					Payload:    ev.Event.Payload,
-					DurationMs: toMillis(elapsed),
-					Dispatches: dispatchDiff,
-				})
-			}
-		}
-
-		iterationDuration := time.Since(iterationStart)
 		iterationDurations = append(iterationDurations, iterationDuration)
-		dispatchCount := hypr.Dispatches()
 		iterationDispatches = append(iterationDispatches, dispatchCount)
 		totalDispatches += dispatchCount
+		durations = append(durations, eventDurations...)
+		if traceEnabled {
+			eventTraces = append(eventTraces, traces...)
+		}
 	}
 
 	runtime.GC()
@@ -334,7 +313,7 @@ func main() {
 		}
 	}
 
-	report := buildReport(fixture, activeMode, *iterations, durations, iterationDurations, iterationDispatches, totalDispatches, startMem, endMem)
+	report := buildReport(fixture, activeMode, *iterations, *warmup, durations, iterationDurations, iterationDispatches, totalDispatches, startMem, endMem)
 	if err := writeReport(report, *outputPath); err != nil {
 		exitErr(fmt.Errorf("encode report: %w", err))
 	}
@@ -350,7 +329,65 @@ func main() {
 	}
 }
 
-func buildReport(fixture benchFixture, mode string, iterations int, durations []time.Duration, iterationDurations []time.Duration, iterationDispatches []int, dispatches int, start, end runtime.MemStats) benchReport {
+func replayIteration(ctx context.Context, fixture benchFixture, cfg *config.Config, modes []rules.Mode, logger *util.Logger, activeMode string, respectDelays bool, iteration int, capture bool, trace bool) (time.Duration, int, []time.Duration, []benchEventTrace, error) {
+	iterationStart := time.Now()
+	hypr := fixture.newHyprctl()
+	eng := engine.New(hypr, logger, modes, false, cfg.RedactTitles, layout.Gaps{
+		Inner: cfg.Gaps.Inner,
+		Outer: cfg.Gaps.Outer,
+	}, cfg.TolerancePx, cfg.ManualReserved)
+
+	if activeMode != "" {
+		if err := eng.SetMode(activeMode); err != nil {
+			return 0, 0, nil, nil, fmt.Errorf("set mode %q: %w", activeMode, err)
+		}
+	}
+
+	if err := eng.Reconcile(ctx); err != nil {
+		return 0, 0, nil, nil, fmt.Errorf("initial reconcile: %w", err)
+	}
+
+	var eventDurations []time.Duration
+	if capture {
+		eventDurations = make([]time.Duration, 0, len(fixture.Events))
+	}
+	var traces []benchEventTrace
+	if capture && trace {
+		traces = make([]benchEventTrace, 0, len(fixture.Events))
+	}
+
+	for idx, ev := range fixture.Events {
+		if respectDelays && ev.Delay > 0 {
+			time.Sleep(ev.Delay)
+		}
+		beforeDispatches := hypr.Dispatches()
+		start := time.Now()
+		if err := eng.ApplyEvent(ctx, ev.Event); err != nil {
+			return 0, 0, nil, nil, fmt.Errorf("apply %s: %w", ev.Event.Kind, err)
+		}
+		elapsed := time.Since(start)
+		if capture {
+			eventDurations = append(eventDurations, elapsed)
+			if trace {
+				dispatchDiff := hypr.Dispatches() - beforeDispatches
+				traces = append(traces, benchEventTrace{
+					Iteration:  iteration,
+					EventIndex: idx + 1,
+					Kind:       ev.Event.Kind,
+					Payload:    ev.Event.Payload,
+					DurationMs: toMillis(elapsed),
+					Dispatches: dispatchDiff,
+				})
+			}
+		}
+	}
+
+	iterationDuration := time.Since(iterationStart)
+	dispatchCount := hypr.Dispatches()
+	return iterationDuration, dispatchCount, eventDurations, traces, nil
+}
+
+func buildReport(fixture benchFixture, mode string, iterations int, warmup int, durations []time.Duration, iterationDurations []time.Duration, iterationDispatches []int, dispatches int, start, end runtime.MemStats) benchReport {
 	totalEvents := len(fixture.Events) * iterations
 	latencyStats, totalEventDuration := buildLatencyStats(durations)
 	iterationStats, _ := buildLatencyStats(iterationDurations)
@@ -400,6 +437,7 @@ func buildReport(fixture benchFixture, mode string, iterations int, durations []
 		Fixture:            fixture.Name,
 		Mode:               mode,
 		Iterations:         iterations,
+		WarmupIterations:   warmup,
 		EventsPerIteration: len(fixture.Events),
 		TotalEvents:        totalEvents,
 		Dispatches: benchDispatchStats{
@@ -494,6 +532,9 @@ func printHumanSummary(summary benchSummary, w io.Writer) error {
 		return err
 	}
 	if _, err := fmt.Fprintf(tw, "Iterations:\t%d\n", summary.Iterations); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(tw, "Warmup iterations:\t%d\n", summary.WarmupIterations); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(tw, "Events/iteration:\t%d\n", summary.EventsPerIteration); err != nil {
