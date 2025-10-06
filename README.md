@@ -25,6 +25,10 @@
     journalctl --user -fu hyprpal
     ```
 
+## Comprehensive How-To Guide
+
+Need a production-ready walkthrough that covers installation, configuration, service management, and troubleshooting? Read the [Hyprpal How-To Guide](./docs/how-to-use.md) for step-by-step procedures, validation checklists, and operational tips.
+
 ## `hsctl` control CLI
 
 `hsctl` is the companion CLI for interacting with a running `hyprpal` daemon. It talks to the daemon over the Unix control socket (default: `${XDG_RUNTIME_DIR}/hyprpal/control.sock`, override with `HYPRPAL_CONTROL_SOCKET` or `--socket`). `make build` compiles `hsctl` to `bin/hsctl`, while `make install` places it alongside `hyprpal` in `~/.local/bin` by default.
