@@ -160,6 +160,101 @@ func TestPrintHumanSummary(t *testing.T) {
 	}
 }
 
+func TestLoadFixtureJSONMergesBase(t *testing.T) {
+	base := defaultFixture()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.json")
+	data := `{
+  "name": "custom",
+  "mode": "Coding",
+  "activeWorkspace": 9,
+  "activeClient": "0xcustom",
+  "events": [
+    {"kind": "noop", "payload": "ignored"},
+    {"kind": "delayed", "payload": "payload", "delay": "15ms"}
+  ]
+}`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	fixture, err := loadFixture(path, base)
+	if err != nil {
+		t.Fatalf("loadFixture returned error: %v", err)
+	}
+
+	if fixture.Name != "custom" {
+		t.Fatalf("Name = %q, want custom", fixture.Name)
+	}
+	if fixture.Mode != "Coding" {
+		t.Fatalf("Mode = %q, want Coding", fixture.Mode)
+	}
+	if fixture.ActiveWorkspace != 9 {
+		t.Fatalf("ActiveWorkspace = %d, want 9", fixture.ActiveWorkspace)
+	}
+	if fixture.ActiveClient != "0xcustom" {
+		t.Fatalf("ActiveClient = %q, want 0xcustom", fixture.ActiveClient)
+	}
+	if got, want := len(fixture.Clients), len(base.Clients); got != want {
+		t.Fatalf("Clients length = %d, want %d (base copied)", got, want)
+	}
+	if len(fixture.Events) != 2 {
+		t.Fatalf("Events length = %d, want 2", len(fixture.Events))
+	}
+	if fixture.Events[1].Delay != 15*time.Millisecond {
+		t.Fatalf("second event delay = %s, want 15ms", fixture.Events[1].Delay)
+	}
+}
+
+func TestLoadFixtureEventLog(t *testing.T) {
+	base := defaultFixture()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.log")
+	log := "# comment\nopenwindow>>0xabc, 3, app, Title\nactivewindow>>0xabc\n"
+	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	fixture, err := loadFixture(path, base)
+	if err != nil {
+		t.Fatalf("loadFixture returned error: %v", err)
+	}
+
+	if fixture.Name != base.Name {
+		t.Fatalf("Name = %q, want %q", fixture.Name, base.Name)
+	}
+	if len(fixture.Events) != 2 {
+		t.Fatalf("Events length = %d, want 2", len(fixture.Events))
+	}
+	if fixture.Events[0].Event.Kind != "openwindow" {
+		t.Fatalf("first event kind = %q, want openwindow", fixture.Events[0].Event.Kind)
+	}
+	if fixture.Events[1].Event.Payload != "0xabc" {
+		t.Fatalf("second event payload = %q, want 0xabc", fixture.Events[1].Event.Payload)
+	}
+	if len(fixture.Clients) != len(base.Clients) {
+		t.Fatalf("Clients length = %d, want %d (base copied)", len(fixture.Clients), len(base.Clients))
+	}
+}
+
+func TestLoadFixtureInvalidDelay(t *testing.T) {
+	base := defaultFixture()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.json")
+	data := `{"events":[{"kind":"noop","delay":"totally-not-a-duration"}]}`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	_, err := loadFixture(path, base)
+	if err == nil {
+		t.Fatal("expected error for invalid delay, got nil")
+	}
+	if !strings.Contains(err.Error(), "parse delay") {
+		t.Fatalf("unexpected error for invalid delay: %v", err)
+	}
+}
+
 func TestFormatBytesSigned(t *testing.T) {
 	if got := formatBytesSigned(0); got != "0 B (0.00 MiB)" {
 		t.Fatalf("formatBytesSigned(0) = %q", got)
