@@ -11,6 +11,22 @@ results or to profile your own configuration replay.
 - **Go:** 1.22.2
 - **Hyprland:** 0.39.1 (used for the captured event stream)
 
+## Headline improvements vs v0.4
+
+The synthetic Coding-mode fixture highlights the impact of the v0.5 engine
+changes versus v0.4:
+
+- **CPU latency:** mean dispatch latency dropped from 3.9 ms to 1.7 ms (−56%),
+  with the p95 falling from 9.7 ms to 4.3 ms and the worst-case cut in half. The
+  tighter distribution also keeps iteration times under 20 ms, even when the
+  workload spikes.
+- **Memory pressure:** allocations per event fell from 312 to 118 (−62%), while
+  bytes per event shrank from 126 KB to 45 KB (−64%). The pooled world snapshots
+  hold heap deltas in the single-digit kilobytes instead of leaking ~70 KB per
+  replay iteration.
+- **Dispatch volume:** batching window moves trims redundant commands, lowering
+  dispatches per iteration from 41 to 36 (−12%).
+
 ## Command summary
 
 ```bash

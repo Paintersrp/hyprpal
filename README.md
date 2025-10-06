@@ -100,6 +100,11 @@ go run ./cmd/bench --config ~/.config/hyprpal/config.yaml \
   --fixture fixtures/coding.json --cpu-profile bench.cpu --mem-profile bench.mem
 ```
 
+Prefer a canned workflow? `make bench` replays the default fixture 25 times and
+honors `PROFILE=1 make bench` to emit CPU/heap profiles under
+`docs/flamegraphs/`. The [performance note](./docs/perf.md) shows the resulting
+benchmarks versus v0.4 and explains how to turn those profiles into flamegraphs.
+
 The fixture supports two formats:
 
 - **JSON** – provide world snapshots plus an ordered list of events. Keys mirror the internal types (`clients`, `workspaces`, `monitors`, `activeWorkspace`, `activeClient`). Each event object accepts `kind`, `payload`, and an optional `delay` duration string.
