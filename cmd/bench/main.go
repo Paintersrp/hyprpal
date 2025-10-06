@@ -101,6 +101,15 @@ type benchIteration struct {
 	Events     int     `json:"events"`
 }
 
+type benchEventTrace struct {
+	Iteration  int     `json:"iteration"`
+	EventIndex int     `json:"eventIndex"`
+	Kind       string  `json:"kind"`
+	Payload    string  `json:"payload"`
+	DurationMs float64 `json:"durationMs"`
+	Dispatches int     `json:"dispatches"`
+}
+
 type benchHyprctl struct {
 	mu              sync.Mutex
 	clients         []state.Client
@@ -183,6 +192,7 @@ func main() {
 	respectDelays := flag.Bool("respect-delays", false, "sleep for event delays declared in the fixture")
 	outputPath := flag.String("output", "-", "write JSON report to file ('-' for stdout)")
 	humanSummary := flag.Bool("human", false, "print a tabular summary alongside the JSON output")
+	eventTracePath := flag.String("event-trace", "", "write per-event timings to file (JSON array, '-' for stdout)")
 	flag.Parse()
 
 	if *iterations <= 0 {
@@ -191,6 +201,8 @@ func main() {
 	}
 
 	logger := util.NewLogger(util.ParseLogLevel(*logLevel))
+
+	traceEnabled := strings.TrimSpace(*eventTracePath) != ""
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -245,10 +257,15 @@ func main() {
 	var startMem runtime.MemStats
 	runtime.ReadMemStats(&startMem)
 
-	durations := make([]time.Duration, 0, len(fixture.Events)*(*iterations))
+	eventsPerIteration := len(fixture.Events)
+	durations := make([]time.Duration, 0, eventsPerIteration*(*iterations))
 	iterationDurations := make([]time.Duration, 0, *iterations)
 	iterationDispatches := make([]int, 0, *iterations)
 	totalDispatches := 0
+	var eventTraces []benchEventTrace
+	if traceEnabled {
+		eventTraces = make([]benchEventTrace, 0, eventsPerIteration*(*iterations))
+	}
 
 	ctx := context.Background()
 
@@ -270,15 +287,28 @@ func main() {
 			exitErr(fmt.Errorf("initial reconcile: %w", err))
 		}
 
-		for _, ev := range fixture.Events {
+		for idx, ev := range fixture.Events {
 			if *respectDelays && ev.Delay > 0 {
 				time.Sleep(ev.Delay)
 			}
+			beforeDispatches := hypr.Dispatches()
 			start := time.Now()
 			if err := eng.ApplyEvent(ctx, ev.Event); err != nil {
 				exitErr(fmt.Errorf("apply %s: %w", ev.Event.Kind, err))
 			}
-			durations = append(durations, time.Since(start))
+			elapsed := time.Since(start)
+			durations = append(durations, elapsed)
+			if traceEnabled {
+				dispatchDiff := hypr.Dispatches() - beforeDispatches
+				eventTraces = append(eventTraces, benchEventTrace{
+					Iteration:  i + 1,
+					EventIndex: idx + 1,
+					Kind:       ev.Event.Kind,
+					Payload:    ev.Event.Payload,
+					DurationMs: toMillis(elapsed),
+					Dispatches: dispatchDiff,
+				})
+			}
 		}
 
 		iterationDuration := time.Since(iterationStart)
@@ -307,6 +337,10 @@ func main() {
 	report := buildReport(fixture, activeMode, *iterations, durations, iterationDurations, iterationDispatches, totalDispatches, startMem, endMem)
 	if err := writeReport(report, *outputPath); err != nil {
 		exitErr(fmt.Errorf("encode report: %w", err))
+	}
+
+	if err := writeEventTrace(eventTraces, *eventTracePath); err != nil {
+		exitErr(fmt.Errorf("write event trace: %w", err))
 	}
 
 	if *humanSummary {
@@ -496,6 +530,44 @@ func printHumanSummary(summary benchSummary, w io.Writer) error {
 		return err
 	}
 	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeEventTrace(events []benchEventTrace, outputPath string) error {
+	path := strings.TrimSpace(outputPath)
+	if path == "" {
+		return nil
+	}
+
+	var (
+		w   io.Writer
+		out *os.File
+		err error
+	)
+
+	if path == "-" {
+		w = os.Stdout
+	} else {
+		dir := filepath.Dir(path)
+		if dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("create event trace dir: %w", err)
+			}
+		}
+		out, err = os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		w = out
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(events); err != nil {
 		return err
 	}
 	return nil

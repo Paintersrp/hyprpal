@@ -117,8 +117,11 @@ Useful flags:
 - `--respect-delays` – sleep for any `delay` values encoded in the fixture events.
 - `--cpu-profile` / `--mem-profile` – emit pprof-compatible profile files for deeper analysis.
 - `--log-level` – adjust engine logging verbosity during the run (defaults to `warn`).
+- `--event-trace` – write a JSON array describing every replayed event (iteration, event index, latency, dispatch delta).
 
 The harness prints summary statistics after replaying the stream: total dispatches (with per-iteration and per-event breakdowns), latency percentiles (min/avg/p50/p95/max in milliseconds), and allocation counts/bytes per event. Use the Makefile target (`make bench`) for a quick replay of the synthetic fixture with the repository's example configuration.
+
+Pair the JSON summary with the optional event trace (`--event-trace bench-events.json`) to isolate the slowest events before diving into flamegraphs. Each entry captures iteration, event kind, payload, latency, and dispatch delta so you can map spikes back to concrete Hyprland activity.
 
 ## Configuration
 
@@ -217,6 +220,8 @@ be expressed as JSON snapshots (see `fixtures/coding.json`) **or** plain event l
 latter case the base world snapshot from the JSON fixture is reused. Use `--respect-delays` to honor any `delay` strings
 captured in the fixture, and `--mode` to force a particular rule mode when the recorded stream did not specify one. Pass `PROFILE=1` to emit CPU/heap profiles in `docs/flamegraphs/` (see
 [docs/perf.md](docs/perf.md) for the exact workflow plus instructions for replaying your own capture).
+
+Need to drill into the worst-case spikes before opening pprof? Supply `--event-trace docs/flamegraphs/v0.5-events.json` alongside the usual flags. Pipe the resulting JSON array through tools like `jq 'sort_by(-.durationMs)[:5]'` to surface the five slowest events so you know which flamegraph sample to inspect first.
 
 The summary payload now includes `heapAllocDeltaBytes`/`heapObjectsDelta` alongside the existing allocation counters so you can
 track the net heap growth per iteration. This makes it straightforward to spot regressions relative to v0.4 (which routinely
