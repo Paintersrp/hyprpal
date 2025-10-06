@@ -69,6 +69,36 @@ go tool pprof -http=:0 docs/flamegraphs/v0.5-bench-cpu.pb.gz
 Repeat for the heap profile. Keep both the `.pb.gz` (raw profile) and `.svg`
 (rendered flamegraph) if you plan to check them into documentation.
 
+## Reproducing the v0.4 baseline
+
+Use the same harness to re-run the fixture against the v0.4 branch when you
+need to regenerate the comparison numbers. The commands below assume you have
+the repository cloned twice side-by-side; swap the paths if you prefer a single
+checkout and `git worktree`:
+
+```bash
+# Old tree: run the v0.4 engine with the synthetic fixture
+cd ~/code/hyprpal-v0.4
+PROFILE=1 go run ./cmd/bench \
+  --config configs/example.yaml \
+  --fixture fixtures/coding.json \
+  --iterations 25 \
+  --output ~/bench/v0.4.json \
+  --cpu-profile ~/bench/v0.4-cpu.pb.gz \
+  --mem-profile ~/bench/v0.4-heap.pb.gz
+
+# New tree: repeat with the current branch
+cd ~/code/hyprpal
+PROFILE=1 make bench
+
+# Collate the summary rows for a quick diff
+jq '.summary' ~/bench/v0.4.json docs/flamegraphs/v0.5-bench.json
+```
+
+The saved JSON lets you keep historical runs in source control. Commit the
+profiles alongside the summaries when you want a permanent record of the
+flamegraphs referenced by release notes.
+
 ## Raw benchmark output
 
 The numbers below are averaged over 25 iterations of the synthetic Coding-mode
