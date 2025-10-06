@@ -510,6 +510,12 @@ func writeReport(report benchReport, outputPath string) error {
 	case "", "-":
 		w = os.Stdout
 	default:
+		dir := filepath.Dir(outputPath)
+		if dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("create report dir: %w", err)
+			}
+		}
 		out, err = os.Create(outputPath)
 		if err != nil {
 			return err
@@ -519,6 +525,7 @@ func writeReport(report benchReport, outputPath string) error {
 	}
 
 	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	return enc.Encode(report)
 }

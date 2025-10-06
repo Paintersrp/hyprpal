@@ -220,6 +220,27 @@ func TestWriteEventTrace(t *testing.T) {
 	}
 }
 
+func TestWriteReportCreatesDirAndSkipsHTMLEscape(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "report.json")
+	report := benchReport{
+		Summary: benchSummary{Fixture: "<fixture>", Mode: "Coding"},
+	}
+
+	if err := writeReport(report, path); err != nil {
+		t.Fatalf("writeReport returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	contents := string(raw)
+	if !strings.Contains(contents, "\"fixture\": \"<fixture>\"") {
+		t.Fatalf("expected raw angle brackets in output, got:\n%s", contents)
+	}
+}
+
 func TestLoadFixtureJSONMergesBase(t *testing.T) {
 	base := defaultFixture()
 	dir := t.TempDir()
