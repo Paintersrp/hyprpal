@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/engine"
+	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
 	"github.com/hyprpal/hyprpal/internal/util"
 )
@@ -252,6 +253,9 @@ func (s *Server) handleRulesStatus(conn net.Conn) {
 		if len(st.RecentExecutions) > 0 {
 			entry.RecentExecutions = append([]time.Time(nil), st.RecentExecutions...)
 		}
+		if throttle := convertRuleThrottle(st.Throttle); throttle != nil {
+			entry.Throttle = throttle
+		}
 		status.Rules = append(status.Rules, entry)
 	}
 	s.writeOK(conn, status)
@@ -288,6 +292,26 @@ func (s *Server) writeOK(conn net.Conn, data any) {
 		resp.Data = data
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
+}
+
+func convertRuleThrottle(throttle *rules.RuleThrottle) *RuleThrottle {
+	if throttle == nil || len(throttle.Windows) == 0 {
+		return nil
+	}
+	out := &RuleThrottle{Windows: make([]RuleThrottleWindow, 0, len(throttle.Windows))}
+	for _, window := range throttle.Windows {
+		if window.FiringLimit <= 0 || window.Window <= 0 {
+			continue
+		}
+		out.Windows = append(out.Windows, RuleThrottleWindow{
+			FiringLimit: window.FiringLimit,
+			WindowMs:    int(window.Window / time.Millisecond),
+		})
+	}
+	if len(out.Windows) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (s *Server) writeError(conn net.Conn, err error) {

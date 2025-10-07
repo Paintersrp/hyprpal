@@ -36,8 +36,37 @@ type PriorityGroup struct {
 
 // RuleThrottle describes rate limiting for a compiled rule.
 type RuleThrottle struct {
+	Windows []RuleThrottleWindow
+}
+
+// RuleThrottleWindow defines a firing threshold within a time window.
+type RuleThrottleWindow struct {
 	FiringLimit int
 	Window      time.Duration
+}
+
+// MaxWindow returns the longest configured window duration.
+func (rt *RuleThrottle) MaxWindow() time.Duration {
+	if rt == nil {
+		return 0
+	}
+	var max time.Duration
+	for _, window := range rt.Windows {
+		if window.Window > max {
+			max = window.Window
+		}
+	}
+	return max
+}
+
+// Clone returns a deep copy of the throttle configuration.
+func (rt *RuleThrottle) Clone() *RuleThrottle {
+	if rt == nil {
+		return nil
+	}
+	out := &RuleThrottle{Windows: make([]RuleThrottleWindow, len(rt.Windows))}
+	copy(out.Windows, rt.Windows)
+	return out
 }
 
 // BuildModes compiles configuration into executable rule sets.
@@ -64,9 +93,30 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 			}
 			var throttle *RuleThrottle
 			if rc.Throttle != nil {
-				throttle = &RuleThrottle{
-					FiringLimit: rc.Throttle.FiringLimit,
-					Window:      time.Duration(rc.Throttle.WindowMs) * time.Millisecond,
+				windows := make([]RuleThrottleWindow, 0, len(rc.Throttle.Windows)+1)
+				if rc.Throttle.FiringLimit > 0 && rc.Throttle.WindowMs > 0 {
+					windows = append(windows, RuleThrottleWindow{
+						FiringLimit: rc.Throttle.FiringLimit,
+						Window:      time.Duration(rc.Throttle.WindowMs) * time.Millisecond,
+					})
+				}
+				for _, window := range rc.Throttle.Windows {
+					if window.FiringLimit <= 0 || window.WindowMs <= 0 {
+						continue
+					}
+					windows = append(windows, RuleThrottleWindow{
+						FiringLimit: window.FiringLimit,
+						Window:      time.Duration(window.WindowMs) * time.Millisecond,
+					})
+				}
+				if len(windows) > 0 {
+					sort.SliceStable(windows, func(i, j int) bool {
+						if windows[i].Window == windows[j].Window {
+							return windows[i].FiringLimit < windows[j].FiringLimit
+						}
+						return windows[i].Window < windows[j].Window
+					})
+					throttle = &RuleThrottle{Windows: windows}
 				}
 			}
 			compiled.Rules = append(compiled.Rules, Rule{

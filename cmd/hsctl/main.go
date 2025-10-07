@@ -241,7 +241,11 @@ func printRulesStatus(w io.Writer, status client.RulesStatus) {
 	}
 	fmt.Fprintln(w, "Rule counters:")
 	for _, entry := range status.Rules {
-		fmt.Fprintf(w, "  [%s] %s: total=%d\n", entry.Mode, entry.Rule, entry.TotalExecutions)
+		line := fmt.Sprintf("  [%s] %s: total=%d", entry.Mode, entry.Rule, entry.TotalExecutions)
+		if suffix := formatThrottleSuffix(entry.Throttle); suffix != "" {
+			line += suffix
+		}
+		fmt.Fprintln(w, line)
 	}
 	disabled := make([]client.RuleStatus, 0)
 	for _, entry := range status.Rules {
@@ -265,4 +269,22 @@ func printRulesStatus(w io.Writer, status client.RulesStatus) {
 		}
 		fmt.Fprintf(w, "  [%s] %s - %s\n", entry.Mode, entry.Rule, reason)
 	}
+}
+
+func formatThrottleSuffix(throttle *client.RuleThrottle) string {
+	if throttle == nil || len(throttle.Windows) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(throttle.Windows))
+	for _, window := range throttle.Windows {
+		if window.FiringLimit <= 0 || window.WindowMs <= 0 {
+			continue
+		}
+		duration := time.Duration(window.WindowMs) * time.Millisecond
+		parts = append(parts, fmt.Sprintf("%d in %s", window.FiringLimit, duration))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (throttle: " + strings.Join(parts, ", ") + ")"
 }

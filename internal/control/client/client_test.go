@@ -52,6 +52,10 @@ func TestRulesStatusSuccess(t *testing.T) {
 			Disabled:         true,
 			DisabledReason:   "throttle",
 			DisabledSince:    now,
+			Throttle: &control.RuleThrottle{Windows: []control.RuleThrottleWindow{{
+				FiringLimit: 5,
+				WindowMs:    2000,
+			}}},
 		}}}}
 		if err := json.NewEncoder(conn).Encode(resp); err != nil {
 			t.Errorf("encode response: %v", err)
@@ -74,6 +78,9 @@ func TestRulesStatusSuccess(t *testing.T) {
 	}
 	if !got.Disabled || got.DisabledReason != "throttle" {
 		t.Fatalf("expected disabled rule with reason, got %#v", got)
+	}
+	if got.Throttle == nil || len(got.Throttle.Windows) != 1 {
+		t.Fatalf("expected throttle windows in status: %#v", got.Throttle)
 	}
 }
 

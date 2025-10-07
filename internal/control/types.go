@@ -78,18 +78,30 @@ type InspectorSnapshot struct {
 // RuleStatus describes a rule's execution counters and disablement state as exposed over the
 // control API.
 type RuleStatus struct {
-	Mode             string      `json:"mode"`
-	Rule             string      `json:"rule"`
-	TotalExecutions  int         `json:"totalExecutions"`
-	RecentExecutions []time.Time `json:"recentExecutions,omitempty"`
-	Disabled         bool        `json:"disabled"`
-	DisabledReason   string      `json:"disabledReason,omitempty"`
-	DisabledSince    time.Time   `json:"disabledSince,omitempty"`
+	Mode             string        `json:"mode"`
+	Rule             string        `json:"rule"`
+	TotalExecutions  int           `json:"totalExecutions"`
+	RecentExecutions []time.Time   `json:"recentExecutions,omitempty"`
+	Disabled         bool          `json:"disabled"`
+	DisabledReason   string        `json:"disabledReason,omitempty"`
+	DisabledSince    time.Time     `json:"disabledSince,omitempty"`
+	Throttle         *RuleThrottle `json:"throttle,omitempty"`
 }
 
 // RulesStatus aggregates the execution state for all loaded rules.
 type RulesStatus struct {
 	Rules []RuleStatus `json:"rules"`
+}
+
+// RuleThrottle mirrors the engine throttle configuration for control clients.
+type RuleThrottle struct {
+	Windows []RuleThrottleWindow `json:"windows"`
+}
+
+// RuleThrottleWindow describes a single sliding window threshold.
+type RuleThrottleWindow struct {
+	FiringLimit int `json:"firingLimit"`
+	WindowMs    int `json:"windowMs"`
 }
 
 // DefaultSocketPath returns the expected location of the hyprpal control socket.

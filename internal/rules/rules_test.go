@@ -30,10 +30,13 @@ func TestBuildModesPropagatesThrottle(t *testing.T) {
 	if throttle == nil {
 		t.Fatalf("expected throttle to be set")
 	}
-	if throttle.FiringLimit != 5 {
-		t.Fatalf("unexpected firing limit: %d", throttle.FiringLimit)
+	if len(throttle.Windows) != 1 {
+		t.Fatalf("expected one throttle window, got %d", len(throttle.Windows))
 	}
-	if throttle.Window != 2*time.Second {
-		t.Fatalf("unexpected throttle window: %v", throttle.Window)
+	if throttle.Windows[0].FiringLimit != 5 {
+		t.Fatalf("unexpected firing limit: %d", throttle.Windows[0].FiringLimit)
+	}
+	if throttle.Windows[0].Window != 2*time.Second {
+		t.Fatalf("unexpected throttle window: %v", throttle.Windows[0].Window)
 	}
 }
