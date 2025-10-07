@@ -184,6 +184,13 @@ func (r *RuleConfig) UnmarshalYAML(value *yaml.Node) error {
 
 // RuleThrottle describes optional rate limiting for rule execution.
 type RuleThrottle struct {
+	FiringLimit int                  `yaml:"firingLimit"`
+	WindowMs    int                  `yaml:"windowMs"`
+	Windows     []RuleThrottleWindow `yaml:"windows"`
+}
+
+// RuleThrottleWindow defines a single sliding window threshold for a rule.
+type RuleThrottleWindow struct {
 	FiringLimit int `yaml:"firingLimit"`
 	WindowMs    int `yaml:"windowMs"`
 }
@@ -495,11 +502,27 @@ func (c *Config) Lint() []LintError {
 				errs = append(errs, newLintError(rulePath+".priority", "cannot be negative"))
 			}
 			if rule.Throttle != nil {
-				if rule.Throttle.FiringLimit <= 0 {
-					errs = append(errs, newLintError(rulePath+".throttle.firingLimit", "must be positive"))
+				throttlePath := rulePath + ".throttle"
+				legacyConfigured := rule.Throttle.FiringLimit != 0 || rule.Throttle.WindowMs != 0
+				if legacyConfigured {
+					if rule.Throttle.FiringLimit <= 0 {
+						errs = append(errs, newLintError(throttlePath+".firingLimit", "must be positive"))
+					}
+					if rule.Throttle.WindowMs <= 0 {
+						errs = append(errs, newLintError(throttlePath+".windowMs", "must be positive"))
+					}
 				}
-				if rule.Throttle.WindowMs <= 0 {
-					errs = append(errs, newLintError(rulePath+".throttle.windowMs", "must be positive"))
+				for idx, window := range rule.Throttle.Windows {
+					windowPath := fmt.Sprintf("%s.windows[%d]", throttlePath, idx)
+					if window.FiringLimit <= 0 {
+						errs = append(errs, newLintError(windowPath+".firingLimit", "must be positive"))
+					}
+					if window.WindowMs <= 0 {
+						errs = append(errs, newLintError(windowPath+".windowMs", "must be positive"))
+					}
+				}
+				if !legacyConfigured && len(rule.Throttle.Windows) == 0 {
+					errs = append(errs, newLintError(throttlePath, "must define at least one window"))
 				}
 			}
 			errs = append(errs, c.lintMatcherReferences(i, j, rule)...)

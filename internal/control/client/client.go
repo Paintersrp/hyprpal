@@ -34,6 +34,10 @@ type (
 	InspectorState = control.InspectorSnapshot
 	// RuleStatus mirrors the rule counter payload returned by the daemon.
 	RuleStatus = control.RuleStatus
+	// RuleThrottle mirrors the throttle window payload returned by the daemon.
+	RuleThrottle = control.RuleThrottle
+	// RuleThrottleWindow mirrors a single throttle window configuration.
+	RuleThrottleWindow = control.RuleThrottleWindow
 	// RulesStatus aggregates rule execution state for all modes.
 	RulesStatus = control.RulesStatus
 )

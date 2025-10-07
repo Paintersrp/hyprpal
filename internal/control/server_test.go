@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/layout"
@@ -96,7 +97,16 @@ func TestHandleModeSetTriggersReconcile(t *testing.T) {
 func TestHandleRulesStatus(t *testing.T) {
 	hyprctl := &fakeHyprctl{}
 	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
-	modes := []rules.Mode{{Name: "Mode", Rules: []rules.Rule{{Name: "Rule"}}}}
+	modes := []rules.Mode{{
+		Name: "Mode",
+		Rules: []rules.Rule{{
+			Name: "Rule",
+			Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{{
+				FiringLimit: 3,
+				Window:      2 * time.Second,
+			}}},
+		}},
+	}}
 	eng := engine.New(hyprctl, logger, modes, false, false, layout.Gaps{}, 0, nil)
 	srv, err := NewServer(eng, logger, nil)
 	if err != nil {
@@ -140,6 +150,10 @@ func TestHandleRulesStatus(t *testing.T) {
 		}
 		if status.Rules[0].Mode != "Mode" || status.Rules[0].Rule != "Rule" {
 			t.Errorf("unexpected rule entry: %#v", status.Rules[0])
+			return
+		}
+		if status.Rules[0].Throttle == nil || len(status.Rules[0].Throttle.Windows) != 1 {
+			t.Errorf("expected throttle windows in response: %#v", status.Rules[0].Throttle)
 		}
 	}()
 

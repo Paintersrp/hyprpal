@@ -513,4 +513,64 @@ func TestLintRuleThrottle(t *testing.T) {
 			t.Fatalf("expected no lint errors, got %#v", errs)
 		}
 	})
+
+	t.Run("invalidThrottleWindows", func(t *testing.T) {
+		cfg := Config{
+			Modes: []ModeConfig{{
+				Name: "Test",
+				Rules: []RuleConfig{func() RuleConfig {
+					rc := baseRule
+					rc.Throttle = &RuleThrottle{Windows: []RuleThrottleWindow{{FiringLimit: 0, WindowMs: 1000}, {FiringLimit: 2, WindowMs: 0}}}
+					return rc
+				}()},
+			}},
+		}
+
+		errs := cfg.Lint()
+		if len(errs) < 2 {
+			t.Fatalf("expected lint errors for invalid windows, got %#v", errs)
+		}
+	})
+
+	t.Run("missingWindows", func(t *testing.T) {
+		cfg := Config{
+			Modes: []ModeConfig{{
+				Name: "Test",
+				Rules: []RuleConfig{func() RuleConfig {
+					rc := baseRule
+					rc.Throttle = &RuleThrottle{}
+					return rc
+				}()},
+			}},
+		}
+
+		errs := cfg.Lint()
+		found := false
+		for _, err := range errs {
+			if err.Path == "modes[0].rules[0].throttle" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected lint error for missing throttle windows, got %#v", errs)
+		}
+	})
+
+	t.Run("validThrottleWindows", func(t *testing.T) {
+		cfg := Config{
+			Modes: []ModeConfig{{
+				Name: "Test",
+				Rules: []RuleConfig{func() RuleConfig {
+					rc := baseRule
+					rc.Throttle = &RuleThrottle{Windows: []RuleThrottleWindow{{FiringLimit: 2, WindowMs: 1000}, {FiringLimit: 5, WindowMs: 4000}}}
+					return rc
+				}()},
+			}},
+		}
+
+		if errs := cfg.Lint(); len(errs) != 0 {
+			t.Fatalf("expected no lint errors for throttle windows, got %#v", errs)
+		}
+	})
 }

@@ -444,10 +444,13 @@ func TestRuleThrottleAllowsNormalFiring(t *testing.T) {
 	var plan layout.Plan
 	plan.Add("focuswindow", "address:client")
 	rule := rules.Rule{
-		Name:     "limited",
-		When:     func(rules.EvalContext) bool { return true },
-		Actions:  []rules.Action{stubAction{plan: plan}},
-		Throttle: &rules.RuleThrottle{FiringLimit: 3, Window: 10 * time.Second},
+		Name:    "limited",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{{
+			FiringLimit: 3,
+			Window:      10 * time.Second,
+		}}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
@@ -498,10 +501,13 @@ func TestRuleThrottleDisablesAfterLimit(t *testing.T) {
 	var plan layout.Plan
 	plan.Add("focuswindow", "address:client")
 	rule := rules.Rule{
-		Name:     "limited",
-		When:     func(rules.EvalContext) bool { return true },
-		Actions:  []rules.Action{stubAction{plan: plan}},
-		Throttle: &rules.RuleThrottle{FiringLimit: 2, Window: 10 * time.Second},
+		Name:    "limited",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{{
+			FiringLimit: 2,
+			Window:      10 * time.Second,
+		}}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
@@ -555,6 +561,61 @@ func TestRuleThrottleDisablesAfterLimit(t *testing.T) {
 	t.Fatalf("rule status not found after disable")
 }
 
+func TestRuleThrottleDisablesOnSecondaryWindow(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:client")
+	rule := rules.Rule{
+		Name:    "limited",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{
+			{FiringLimit: 100, Window: time.Second},
+			{FiringLimit: 3, Window: 2 * time.Second},
+		}},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+	key := mode.Name + ":" + rule.Name
+
+	for i := 0; i < 3; i++ {
+		if err := eng.reconcileAndApply(context.Background()); err != nil {
+			t.Fatalf("reconcileAndApply call %d returned error: %v", i+1, err)
+		}
+		clearCooldown(t, eng, key)
+	}
+
+	logs.Reset()
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("fourth reconcileAndApply returned error: %v", err)
+	}
+
+	statuses := eng.RulesStatus()
+	for _, st := range statuses {
+		if st.Mode == mode.Name && st.Rule == rule.Name {
+			if !st.Disabled {
+				t.Fatalf("expected rule to be disabled after hitting secondary window, got %#v", st)
+			}
+			if st.DisabledReason != "disabled (throttle)" {
+				t.Fatalf("unexpected disabled reason: %#v", st)
+			}
+			if st.TotalExecutions != 3 {
+				t.Fatalf("expected three executions before disable, got %d", st.TotalExecutions)
+			}
+			if st.Throttle == nil || len(st.Throttle.Windows) != 2 {
+				t.Fatalf("expected throttle windows recorded, got %#v", st.Throttle)
+			}
+			return
+		}
+	}
+	t.Fatalf("rule status not found after secondary window disable")
+}
+
 func TestEnableRuleClearsThrottleState(t *testing.T) {
 	hypr := &fakeHyprctl{
 		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
@@ -564,10 +625,13 @@ func TestEnableRuleClearsThrottleState(t *testing.T) {
 	var plan layout.Plan
 	plan.Add("focuswindow", "address:client")
 	rule := rules.Rule{
-		Name:     "limited",
-		When:     func(rules.EvalContext) bool { return true },
-		Actions:  []rules.Action{stubAction{plan: plan}},
-		Throttle: &rules.RuleThrottle{FiringLimit: 1, Window: 10 * time.Second},
+		Name:    "limited",
+		When:    func(rules.EvalContext) bool { return true },
+		Actions: []rules.Action{stubAction{plan: plan}},
+		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{{
+			FiringLimit: 1,
+			Window:      10 * time.Second,
+		}}},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)

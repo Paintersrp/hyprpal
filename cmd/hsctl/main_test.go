@@ -108,7 +108,10 @@ func (f *fakeRulesClient) EnableRule(_ context.Context, mode, rule string) error
 func TestRunRulesStatus(t *testing.T) {
 	now := time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC)
 	client := &fakeRulesClient{status: controlclient.RulesStatus{Rules: []controlclient.RuleStatus{
-		{Mode: "Coding", Rule: "Dock", TotalExecutions: 3},
+		{Mode: "Coding", Rule: "Dock", TotalExecutions: 3, Throttle: &controlclient.RuleThrottle{Windows: []controlclient.RuleThrottleWindow{{
+			FiringLimit: 3,
+			WindowMs:    2000,
+		}}}},
 		{Mode: "Coding", Rule: "Throttle", TotalExecutions: 5, Disabled: true, DisabledReason: "throttle", DisabledSince: now},
 	}}}
 	var buf bytes.Buffer
@@ -119,7 +122,7 @@ func TestRunRulesStatus(t *testing.T) {
 	if !strings.Contains(output, "Rule counters:") {
 		t.Fatalf("expected counters header in output: %q", output)
 	}
-	if !strings.Contains(output, "[Coding] Dock: total=3") {
+	if !strings.Contains(output, "[Coding] Dock: total=3 (throttle: 3 in 2s)") {
 		t.Fatalf("missing dock counter: %q", output)
 	}
 	if !strings.Contains(output, "Disabled rules:") {

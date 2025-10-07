@@ -126,11 +126,12 @@ func (s *ruleExecutionState) prune(throttle *rules.RuleThrottle, now time.Time) 
 	if throttle == nil || len(s.recent) == 0 {
 		return
 	}
-	if throttle.Window <= 0 {
+	maxWindow := throttle.MaxWindow()
+	if maxWindow <= 0 {
 		s.recent = nil
 		return
 	}
-	cutoff := now.Add(-throttle.Window)
+	cutoff := now.Add(-maxWindow)
 	kept := s.recent[:0]
 	for _, ts := range s.recent {
 		if ts.After(cutoff) {
@@ -862,14 +863,23 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				e.recordRuleCheck(record)
 				continue
 			}
-			allowed, reason, disabledNow := e.recordRuleExecution(key, now, rule.Throttle)
+			allowed, reason, disabledNow, window := e.recordRuleExecution(key, now, rule.Throttle)
 			if !allowed {
 				if reason == "" {
 					reason = "disabled"
 				}
 				if log {
 					if disabledNow && rule.Throttle != nil {
-						e.logger.Warnf("rule %s disabled after exceeding throttle limit (%d within %s) [mode %s]", rule.Name, rule.Throttle.FiringLimit, rule.Throttle.Window, activeMode)
+						limit := 0
+						windowDur := time.Duration(0)
+						if window != nil {
+							limit = window.FiringLimit
+							windowDur = window.Window
+						} else if len(rule.Throttle.Windows) > 0 {
+							limit = rule.Throttle.Windows[0].FiringLimit
+							windowDur = rule.Throttle.Windows[0].Window
+						}
+						e.logger.Warnf("rule %s disabled after exceeding throttle limit (%d within %s) [mode %s]", rule.Name, limit, windowDur, activeMode)
 					} else {
 						e.logger.Infof("rule %s skipped (%s) [mode %s]", rule.Name, reason, activeMode)
 					}
@@ -1017,27 +1027,51 @@ func (e *Engine) getRuleStateLocked(key string) *ruleExecutionState {
 	return state
 }
 
-func (e *Engine) recordRuleExecution(ruleKey string, when time.Time, throttle *rules.RuleThrottle) (bool, string, bool) {
+func (e *Engine) recordRuleExecution(ruleKey string, when time.Time, throttle *rules.RuleThrottle) (bool, string, bool, *rules.RuleThrottleWindow) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	state := e.getRuleStateLocked(ruleKey)
 	if state.disabled {
-		return false, state.currentReason(), false
+		return false, state.currentReason(), false, nil
 	}
 	if throttle != nil {
 		state.prune(throttle, when)
-		if throttle.FiringLimit > 0 && len(state.recent) >= throttle.FiringLimit {
+		if window := exceededThrottleWindow(throttle, state.recent, when); window != nil {
 			state.disabled = true
 			state.disabledSince = when
 			state.disabledReason = "disabled (throttle)"
-			return false, state.disabledReason, true
+			return false, state.disabledReason, true, window
 		}
 	}
 	state.total++
 	if throttle != nil {
 		state.recent = append(state.recent, when)
 	}
-	return true, "", false
+	return true, "", false, nil
+}
+
+func exceededThrottleWindow(throttle *rules.RuleThrottle, recent []time.Time, now time.Time) *rules.RuleThrottleWindow {
+	if throttle == nil || len(throttle.Windows) == 0 {
+		return nil
+	}
+	for i := range throttle.Windows {
+		window := throttle.Windows[i]
+		if window.FiringLimit <= 0 || window.Window <= 0 {
+			continue
+		}
+		cutoff := now.Add(-window.Window)
+		count := 0
+		for j := len(recent) - 1; j >= 0; j-- {
+			if recent[j].Before(cutoff) {
+				break
+			}
+			count++
+		}
+		if count >= window.FiringLimit {
+			return &throttle.Windows[i]
+		}
+	}
+	return nil
 }
 
 // RulesStatus reports the per-rule execution state including throttle counters.
@@ -1062,7 +1096,9 @@ func (e *Engine) RulesStatus() []RuleStatus {
 				Disabled:        state.disabled,
 				DisabledReason:  state.currentReason(),
 				DisabledSince:   state.disabledSince,
-				Throttle:        rule.Throttle,
+			}
+			if rule.Throttle != nil {
+				status.Throttle = rule.Throttle.Clone()
 			}
 			if rule.Throttle != nil && len(state.recent) > 0 {
 				status.RecentExecutions = append([]time.Time(nil), state.recent...)
