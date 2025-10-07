@@ -434,7 +434,7 @@ func TestReconcileUsesBatchDispatcherWhenAvailable(t *testing.T) {
 	}
 }
 
-func TestRuleExecutionTrackingAllowsNormalFlow(t *testing.T) {
+func TestRuleThrottleAllowsNormalFiring(t *testing.T) {
 	hypr := &fakeHyprctl{
 		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
 		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
@@ -444,58 +444,51 @@ func TestRuleExecutionTrackingAllowsNormalFlow(t *testing.T) {
 	var plan layout.Plan
 	plan.Add("focuswindow", "address:client")
 	rule := rules.Rule{
-		Name:    "burst",
-		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
-	}
-	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
-	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
-
-	if err := eng.reconcileAndApply(context.Background()); err != nil {
-		t.Fatalf("reconcileAndApply returned error: %v", err)
-	}
-	if len(hypr.dispatched) != 1 {
-		t.Fatalf("expected one dispatch, got %d", len(hypr.dispatched))
-	}
-	if strings.Contains(logs.String(), "temporarily disabled") {
-		t.Fatalf("unexpected temporary disable log: %s", logs.String())
-	}
-}
-
-func TestRuleExecutionTrackingBelowThreshold(t *testing.T) {
-	hypr := &fakeHyprctl{
-		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
-		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
-	}
-	var logs bytes.Buffer
-	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
-	var plan layout.Plan
-	plan.Add("focuswindow", "address:client")
-	rule := rules.Rule{
-		Name:    "burst",
-		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Name:     "limited",
+		When:     func(rules.EvalContext) bool { return true },
+		Actions:  []rules.Action{stubAction{plan: plan}},
+		Throttle: &rules.RuleThrottle{FiringLimit: 3, Window: 10 * time.Second},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 	key := mode.Name + ":" + rule.Name
 
-	for i := 0; i < ruleBurstThreshold; i++ {
+	for i := 0; i < 2; i++ {
 		if err := eng.reconcileAndApply(context.Background()); err != nil {
 			t.Fatalf("reconcileAndApply call %d returned error: %v", i+1, err)
 		}
 		clearCooldown(t, eng, key)
 	}
 
-	if len(hypr.dispatched) != ruleBurstThreshold {
-		t.Fatalf("expected %d dispatches, got %d", ruleBurstThreshold, len(hypr.dispatched))
+	if len(hypr.dispatched) != 2 {
+		t.Fatalf("expected 2 dispatches, got %d", len(hypr.dispatched))
 	}
-	if strings.Contains(logs.String(), "temporarily disabled") {
-		t.Fatalf("unexpected temporary disable log: %s", logs.String())
+	if strings.Contains(logs.String(), "disabled") {
+		t.Fatalf("unexpected disable log: %s", logs.String())
+	}
+
+	statuses := eng.RulesStatus()
+	found := false
+	for _, st := range statuses {
+		if st.Mode == mode.Name && st.Rule == rule.Name {
+			found = true
+			if st.TotalExecutions != 2 {
+				t.Fatalf("expected total executions 2, got %d", st.TotalExecutions)
+			}
+			if st.Disabled {
+				t.Fatalf("expected rule to remain enabled, status: %#v", st)
+			}
+			if len(st.RecentExecutions) != 2 {
+				t.Fatalf("expected 2 recent executions, got %d", len(st.RecentExecutions))
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("rule status not found: %#v", statuses)
 	}
 }
 
-func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
+func TestRuleThrottleDisablesAfterLimit(t *testing.T) {
 	hypr := &fakeHyprctl{
 		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
 		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
@@ -505,15 +498,16 @@ func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
 	var plan layout.Plan
 	plan.Add("focuswindow", "address:client")
 	rule := rules.Rule{
-		Name:    "burst",
-		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Name:     "limited",
+		When:     func(rules.EvalContext) bool { return true },
+		Actions:  []rules.Action{stubAction{plan: plan}},
+		Throttle: &rules.RuleThrottle{FiringLimit: 2, Window: 10 * time.Second},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
 	key := mode.Name + ":" + rule.Name
 
-	for i := 0; i < ruleBurstThreshold; i++ {
+	for i := 0; i < 2; i++ {
 		if err := eng.reconcileAndApply(context.Background()); err != nil {
 			t.Fatalf("reconcileAndApply call %d returned error: %v", i+1, err)
 		}
@@ -524,17 +518,105 @@ func TestRuleExecutionTrackingExceedsThreshold(t *testing.T) {
 	if err := eng.reconcileAndApply(context.Background()); err != nil {
 		t.Fatalf("final reconcileAndApply returned error: %v", err)
 	}
-	if !strings.Contains(logs.String(), "temporarily disabled") {
-		t.Fatalf("expected temporary disable log, got %s", logs.String())
+	if strings.Contains(logs.String(), "disabled after exceeding throttle limit") == false {
+		t.Fatalf("expected throttle disable log, got %s", logs.String())
 	}
-	if len(hypr.dispatched) != ruleBurstThreshold {
-		t.Fatalf("expected %d dispatches after throttling, got %d", ruleBurstThreshold, len(hypr.dispatched))
+	if len(hypr.dispatched) != 2 {
+		t.Fatalf("expected 2 dispatches before disable, got %d", len(hypr.dispatched))
 	}
-	eng.mu.Lock()
-	cooldownUntil := eng.cooldown[key]
-	eng.mu.Unlock()
-	if cooldownUntil.Before(time.Now()) {
-		t.Fatalf("expected cooldown to be in the future, got %v", cooldownUntil)
+
+	records := eng.RuleCheckHistory()
+	seenDisabled := false
+	for _, rec := range records {
+		if rec.Rule == rule.Name && rec.Reason == "disabled (throttle)" {
+			seenDisabled = true
+			break
+		}
+	}
+	if !seenDisabled {
+		t.Fatalf("expected disabled record in rule history, got %#v", records)
+	}
+
+	statuses := eng.RulesStatus()
+	for _, st := range statuses {
+		if st.Mode == mode.Name && st.Rule == rule.Name {
+			if !st.Disabled {
+				t.Fatalf("expected rule to be disabled, got %#v", st)
+			}
+			if st.TotalExecutions != 2 {
+				t.Fatalf("expected total executions 2, got %d", st.TotalExecutions)
+			}
+			if st.DisabledReason != "disabled (throttle)" {
+				t.Fatalf("unexpected disabled reason: %#v", st)
+			}
+			return
+		}
+	}
+	t.Fatalf("rule status not found after disable")
+}
+
+func TestEnableRuleClearsThrottleState(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "1", MonitorName: "HDMI-A-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "HDMI-A-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	logger := util.NewLogger(util.LevelInfo)
+	var plan layout.Plan
+	plan.Add("focuswindow", "address:client")
+	rule := rules.Rule{
+		Name:     "limited",
+		When:     func(rules.EvalContext) bool { return true },
+		Actions:  []rules.Action{stubAction{plan: plan}},
+		Throttle: &rules.RuleThrottle{FiringLimit: 1, Window: 10 * time.Second},
+	}
+	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
+	key := mode.Name + ":" + rule.Name
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("first reconcileAndApply returned error: %v", err)
+	}
+	clearCooldown(t, eng, key)
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("second reconcileAndApply returned error: %v", err)
+	}
+
+	statuses := eng.RulesStatus()
+	var disabledBefore bool
+	for _, st := range statuses {
+		if st.Mode == mode.Name && st.Rule == rule.Name {
+			disabledBefore = st.Disabled
+		}
+	}
+	if !disabledBefore {
+		t.Fatalf("expected rule to be disabled before manual enable")
+	}
+
+	if err := eng.EnableRule(mode.Name, rule.Name); err != nil {
+		t.Fatalf("EnableRule returned error: %v", err)
+	}
+
+	statuses = eng.RulesStatus()
+	for _, st := range statuses {
+		if st.Mode == mode.Name && st.Rule == rule.Name {
+			if st.Disabled {
+				t.Fatalf("expected rule to be enabled after manual enable, got %#v", st)
+			}
+			if st.TotalExecutions != 0 {
+				t.Fatalf("expected counters reset after enable, got %d", st.TotalExecutions)
+			}
+			if len(st.RecentExecutions) != 0 {
+				t.Fatalf("expected recent executions reset, got %d", len(st.RecentExecutions))
+			}
+		}
+	}
+
+	clearCooldown(t, eng, key)
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply after enable returned error: %v", err)
+	}
+	if len(hypr.dispatched) != 2 {
+		t.Fatalf("expected second dispatch after re-enable, got %d", len(hypr.dispatched))
 	}
 }
 

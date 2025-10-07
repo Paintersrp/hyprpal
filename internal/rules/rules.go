@@ -18,6 +18,7 @@ type Rule struct {
 	MutateUnmanaged   bool
 	ManagedWorkspaces map[int]struct{}
 	Priority          int
+	Throttle          *RuleThrottle
 }
 
 // Mode aggregates rules under a named mode.
@@ -31,6 +32,12 @@ type Mode struct {
 type PriorityGroup struct {
 	Priority int
 	Rules    []Rule
+}
+
+// RuleThrottle describes rate limiting for a compiled rule.
+type RuleThrottle struct {
+	FiringLimit int
+	Window      time.Duration
 }
 
 // BuildModes compiles configuration into executable rule sets.
@@ -55,6 +62,13 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 			if debounce == 0 {
 				debounce = 500 * time.Millisecond
 			}
+			var throttle *RuleThrottle
+			if rc.Throttle != nil {
+				throttle = &RuleThrottle{
+					FiringLimit: rc.Throttle.FiringLimit,
+					Window:      time.Duration(rc.Throttle.WindowMs) * time.Millisecond,
+				}
+			}
 			compiled.Rules = append(compiled.Rules, Rule{
 				Name:              rc.Name,
 				When:              pred,
@@ -64,6 +78,7 @@ func BuildModes(cfg *config.Config) ([]Mode, error) {
 				MutateUnmanaged:   rc.MutateUnmanaged,
 				ManagedWorkspaces: managed,
 				Priority:          rc.Priority,
+				Throttle:          throttle,
 			})
 		}
 		modes = append(modes, NormalizeMode(compiled))

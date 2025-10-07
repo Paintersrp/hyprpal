@@ -56,22 +56,19 @@ type Engine struct {
 	tolerancePx    float64
 	manualReserved map[string]layout.Insets
 
-	mu          sync.Mutex
-	debounce    map[string]time.Time
-	cooldown    map[string]time.Time
-	execHistory map[string][]time.Time
-	lastWorld   *state.World
-	evalLog     *evaluationLog
-	ruleChecks  *ruleCheckHistory
+	mu         sync.Mutex
+	debounce   map[string]time.Time
+	cooldown   map[string]time.Time
+	ruleState  map[string]*ruleExecutionState
+	lastWorld  *state.World
+	evalLog    *evaluationLog
+	ruleChecks *ruleCheckHistory
 
 	tickerFactory func() ticker
 	subscribe     subscribeFunc
 }
 
 const (
-	ruleBurstWindow       = 5 * time.Second
-	ruleBurstThreshold    = 3
-	ruleBurstCooldown     = 5 * time.Second
 	ruleCheckHistoryLimit = 256
 )
 
@@ -107,6 +104,54 @@ type ruleCheckHistory struct {
 	capacity int
 }
 
+type ruleExecutionState struct {
+	recent         []time.Time
+	total          int
+	disabled       bool
+	disabledSince  time.Time
+	disabledReason string
+}
+
+func (s *ruleExecutionState) currentReason() string {
+	if !s.disabled {
+		return ""
+	}
+	if s.disabledReason != "" {
+		return s.disabledReason
+	}
+	return "disabled"
+}
+
+func (s *ruleExecutionState) prune(throttle *rules.RuleThrottle, now time.Time) {
+	if throttle == nil || len(s.recent) == 0 {
+		return
+	}
+	if throttle.Window <= 0 {
+		s.recent = nil
+		return
+	}
+	cutoff := now.Add(-throttle.Window)
+	kept := s.recent[:0]
+	for _, ts := range s.recent {
+		if ts.After(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	s.recent = kept
+}
+
+// RuleStatus describes the current execution state for a compiled rule.
+type RuleStatus struct {
+	Mode             string
+	Rule             string
+	TotalExecutions  int
+	RecentExecutions []time.Time
+	Disabled         bool
+	DisabledReason   string
+	DisabledSince    time.Time
+	Throttle         *rules.RuleThrottle
+}
+
 // New creates a new engine instance.
 func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun bool, redactTitles bool, gaps layout.Gaps, tolerancePx float64, manualReserved map[string]layout.Insets) *Engine {
 	modeMap := make(map[string]rules.Mode)
@@ -133,7 +178,7 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		manualReserved: cloneInsetsMap(manualReserved),
 		debounce:       make(map[string]time.Time),
 		cooldown:       make(map[string]time.Time),
-		execHistory:    make(map[string][]time.Time),
+		ruleState:      make(map[string]*ruleExecutionState),
 		evalLog:        newEvaluationLog(0),
 		ruleChecks:     newRuleCheckHistory(0),
 		tickerFactory: func() ticker {
@@ -177,7 +222,7 @@ func (e *Engine) ReloadModes(modes []rules.Mode) {
 	}
 	e.debounce = make(map[string]time.Time)
 	e.cooldown = make(map[string]time.Time)
-	e.execHistory = make(map[string][]time.Time)
+	e.ruleState = make(map[string]*ruleExecutionState)
 	if e.evalLog != nil {
 		e.evalLog = newEvaluationLog(0)
 	}
@@ -745,6 +790,10 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 			e.mu.Lock()
 			last := e.debounce[key]
 			cooldownUntil := e.cooldown[key]
+			disabledReason := ""
+			if state, ok := e.ruleState[key]; ok && state.disabled {
+				disabledReason = state.currentReason()
+			}
 			e.mu.Unlock()
 			matched := true
 			predicateTrace := &rules.PredicateTrace{Kind: "predicate", Result: true}
@@ -760,6 +809,14 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				Rule:      rule.Name,
 				Matched:   matched,
 				Predicate: predicateTrace,
+			}
+			if disabledReason != "" {
+				if log {
+					e.logger.Infof("rule %s skipped (%s) [mode %s]", rule.Name, disabledReason, activeMode)
+				}
+				record.Reason = disabledReason
+				e.recordRuleCheck(record)
+				continue
 			}
 			if cooldownUntil.After(now) {
 				if log {
@@ -805,12 +862,19 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				e.recordRuleCheck(record)
 				continue
 			}
-			throttled := e.trackExecution(key, rulePlan, now)
-			if throttled {
-				if log {
-					e.logger.Warnf("rule %s temporarily disabled after %d executions in %s [mode %s]", rule.Name, ruleBurstThreshold, ruleBurstWindow, activeMode)
+			allowed, reason, disabledNow := e.recordRuleExecution(key, now, rule.Throttle)
+			if !allowed {
+				if reason == "" {
+					reason = "disabled"
 				}
-				record.Reason = "throttled"
+				if log {
+					if disabledNow && rule.Throttle != nil {
+						e.logger.Warnf("rule %s disabled after exceeding throttle limit (%d within %s) [mode %s]", rule.Name, rule.Throttle.FiringLimit, rule.Throttle.Window, activeMode)
+					} else {
+						e.logger.Infof("rule %s skipped (%s) [mode %s]", rule.Name, reason, activeMode)
+					}
+				}
+				record.Reason = reason
 				e.recordRuleCheck(record)
 				continue
 			}
@@ -944,6 +1008,104 @@ func (e *Engine) recordRuleCheck(record RuleCheckRecord) {
 	e.mu.Unlock()
 }
 
+func (e *Engine) getRuleStateLocked(key string) *ruleExecutionState {
+	if state, ok := e.ruleState[key]; ok {
+		return state
+	}
+	state := &ruleExecutionState{}
+	e.ruleState[key] = state
+	return state
+}
+
+func (e *Engine) recordRuleExecution(ruleKey string, when time.Time, throttle *rules.RuleThrottle) (bool, string, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	state := e.getRuleStateLocked(ruleKey)
+	if state.disabled {
+		return false, state.currentReason(), false
+	}
+	if throttle != nil {
+		state.prune(throttle, when)
+		if throttle.FiringLimit > 0 && len(state.recent) >= throttle.FiringLimit {
+			state.disabled = true
+			state.disabledSince = when
+			state.disabledReason = "disabled (throttle)"
+			return false, state.disabledReason, true
+		}
+	}
+	state.total++
+	if throttle != nil {
+		state.recent = append(state.recent, when)
+	}
+	return true, "", false
+}
+
+// RulesStatus reports the per-rule execution state including throttle counters.
+func (e *Engine) RulesStatus() []RuleStatus {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	statuses := make([]RuleStatus, 0)
+	for _, modeName := range e.modeOrder {
+		mode, ok := e.modes[modeName]
+		if !ok {
+			continue
+		}
+		for _, rule := range mode.Rules {
+			key := modeName + ":" + rule.Name
+			state := e.getRuleStateLocked(key)
+			state.prune(rule.Throttle, now)
+			status := RuleStatus{
+				Mode:            modeName,
+				Rule:            rule.Name,
+				TotalExecutions: state.total,
+				Disabled:        state.disabled,
+				DisabledReason:  state.currentReason(),
+				DisabledSince:   state.disabledSince,
+				Throttle:        rule.Throttle,
+			}
+			if rule.Throttle != nil && len(state.recent) > 0 {
+				status.RecentExecutions = append([]time.Time(nil), state.recent...)
+			}
+			statuses = append(statuses, status)
+		}
+	}
+	return statuses
+}
+
+// EnableRule clears throttle state and reenables the provided rule.
+func (e *Engine) EnableRule(modeName, ruleName string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	mode, ok := e.modes[modeName]
+	if !ok {
+		return fmt.Errorf("unknown mode %q", modeName)
+	}
+	found := false
+	for _, rule := range mode.Rules {
+		if rule.Name == ruleName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown rule %q in mode %q", ruleName, modeName)
+	}
+	key := modeName + ":" + ruleName
+	delete(e.debounce, key)
+	delete(e.cooldown, key)
+	state := e.getRuleStateLocked(key)
+	state.recent = nil
+	state.total = 0
+	state.disabled = false
+	state.disabledSince = time.Time{}
+	state.disabledReason = ""
+	if e.logger != nil {
+		e.logger.Infof("rule %s manually re-enabled [mode %s]", ruleName, modeName)
+	}
+	return nil
+}
+
 func (e *Engine) markDebounce(rules []plannedRule, when time.Time) {
 	if len(rules) == 0 {
 		return
@@ -988,41 +1150,6 @@ func (e *Engine) recordRuleEvaluations(rules []plannedRule, when time.Time, stat
 		}
 		e.evalLog.record(entry)
 	}
-}
-
-func (e *Engine) trackExecution(ruleKey string, plan layout.Plan, now time.Time) bool {
-	sig := executionSignature(ruleKey, plan)
-	windowStart := now.Add(-ruleBurstWindow)
-
-	e.mu.Lock()
-	history := e.execHistory[sig]
-	pruned := history[:0]
-	for _, ts := range history {
-		if ts.After(windowStart) {
-			pruned = append(pruned, ts)
-		}
-	}
-	pruned = append(pruned, now)
-	e.execHistory[sig] = pruned
-	exceeded := len(pruned) > ruleBurstThreshold
-	if exceeded {
-		e.cooldown[ruleKey] = now.Add(ruleBurstCooldown)
-	}
-	e.mu.Unlock()
-	return exceeded
-}
-
-func executionSignature(ruleKey string, plan layout.Plan) string {
-	var b strings.Builder
-	b.WriteString(ruleKey)
-	b.WriteString("|")
-	for i, cmd := range plan.Commands {
-		if i > 0 {
-			b.WriteString(";")
-		}
-		b.WriteString(strings.Join(cmd, " "))
-	}
-	return b.String()
 }
 
 func (e *Engine) isInteresting(kind string) bool {

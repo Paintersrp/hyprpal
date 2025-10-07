@@ -437,3 +437,80 @@ func TestLintRulePriority(t *testing.T) {
 		t.Fatalf("expected no lint errors for positive priority, got %#v", errs)
 	}
 }
+
+func TestLintRuleThrottle(t *testing.T) {
+	baseRule := RuleConfig{
+		Name: "Example",
+		When: PredicateConfig{Mode: "Test"},
+		Actions: []ActionConfig{{
+			Type: "layout.fullscreen",
+		}},
+	}
+
+	t.Run("invalidLimit", func(t *testing.T) {
+		cfg := Config{
+			Modes: []ModeConfig{{
+				Name: "Test",
+				Rules: []RuleConfig{func() RuleConfig {
+					rc := baseRule
+					rc.Throttle = &RuleThrottle{FiringLimit: 0, WindowMs: 1000}
+					return rc
+				}()},
+			}},
+		}
+
+		errs := cfg.Lint()
+		found := false
+		for _, err := range errs {
+			if err.Path == "modes[0].rules[0].throttle.firingLimit" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected lint error for throttle firing limit, got %#v", errs)
+		}
+	})
+
+	t.Run("invalidWindow", func(t *testing.T) {
+		cfg := Config{
+			Modes: []ModeConfig{{
+				Name: "Test",
+				Rules: []RuleConfig{func() RuleConfig {
+					rc := baseRule
+					rc.Throttle = &RuleThrottle{FiringLimit: 3, WindowMs: 0}
+					return rc
+				}()},
+			}},
+		}
+
+		errs := cfg.Lint()
+		found := false
+		for _, err := range errs {
+			if err.Path == "modes[0].rules[0].throttle.windowMs" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected lint error for throttle window, got %#v", errs)
+		}
+	})
+
+	t.Run("validThrottle", func(t *testing.T) {
+		cfg := Config{
+			Modes: []ModeConfig{{
+				Name: "Test",
+				Rules: []RuleConfig{func() RuleConfig {
+					rc := baseRule
+					rc.Throttle = &RuleThrottle{FiringLimit: 3, WindowMs: 2500}
+					return rc
+				}()},
+			}},
+		}
+
+		if errs := cfg.Lint(); len(errs) != 0 {
+			t.Fatalf("expected no lint errors, got %#v", errs)
+		}
+	})
+}

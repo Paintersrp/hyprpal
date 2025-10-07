@@ -142,6 +142,7 @@ type RuleConfig struct {
 	DebounceMs      int             `yaml:"debounceMs"`
 	MutateUnmanaged bool            `yaml:"mutateUnmanaged"`
 	Priority        int             `yaml:"priority"`
+	Throttle        *RuleThrottle   `yaml:"throttle"`
 }
 
 // UnmarshalYAML keeps backwards compatibility with the deprecated allowUnmanaged flag.
@@ -154,6 +155,7 @@ func (r *RuleConfig) UnmarshalYAML(value *yaml.Node) error {
 		MutateUnmanaged *bool           `yaml:"mutateUnmanaged"`
 		AllowUnmanaged  *bool           `yaml:"allowUnmanaged"`
 		Priority        int             `yaml:"priority"`
+		Throttle        *RuleThrottle   `yaml:"throttle"`
 	}
 
 	var raw rawRule
@@ -166,6 +168,7 @@ func (r *RuleConfig) UnmarshalYAML(value *yaml.Node) error {
 	r.Actions = raw.Actions
 	r.DebounceMs = raw.DebounceMs
 	r.Priority = raw.Priority
+	r.Throttle = raw.Throttle
 
 	switch {
 	case raw.MutateUnmanaged != nil:
@@ -177,6 +180,12 @@ func (r *RuleConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	return nil
+}
+
+// RuleThrottle describes optional rate limiting for rule execution.
+type RuleThrottle struct {
+	FiringLimit int `yaml:"firingLimit"`
+	WindowMs    int `yaml:"windowMs"`
 }
 
 // PredicateConfig implements the simple predicate tree language.
@@ -484,6 +493,14 @@ func (c *Config) Lint() []LintError {
 			}
 			if rule.Priority < 0 {
 				errs = append(errs, newLintError(rulePath+".priority", "cannot be negative"))
+			}
+			if rule.Throttle != nil {
+				if rule.Throttle.FiringLimit <= 0 {
+					errs = append(errs, newLintError(rulePath+".throttle.firingLimit", "must be positive"))
+				}
+				if rule.Throttle.WindowMs <= 0 {
+					errs = append(errs, newLintError(rulePath+".throttle.windowMs", "must be positive"))
+				}
 			}
 			errs = append(errs, c.lintMatcherReferences(i, j, rule)...)
 		}
