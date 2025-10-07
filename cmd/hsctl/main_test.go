@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	controlclient "github.com/hyprpal/hyprpal/internal/control/client"
 )
 
 func writeTempConfig(t *testing.T, contents string) string {
@@ -77,5 +81,90 @@ modes:
 	}
 	if !strings.Contains(output, fmt.Sprintf("%s: modes[0].rules[0].actions: must define at least one action", path)) {
 		t.Fatalf("missing rule actions error: %q", output)
+	}
+}
+
+type fakeRulesClient struct {
+	status    controlclient.RulesStatus
+	statusErr error
+	enableErr error
+	lastMode  string
+	lastRule  string
+}
+
+func (f *fakeRulesClient) RulesStatus(context.Context) (controlclient.RulesStatus, error) {
+	if f.statusErr != nil {
+		return controlclient.RulesStatus{}, f.statusErr
+	}
+	return f.status, nil
+}
+
+func (f *fakeRulesClient) EnableRule(_ context.Context, mode, rule string) error {
+	f.lastMode = mode
+	f.lastRule = rule
+	return f.enableErr
+}
+
+func TestRunRulesStatus(t *testing.T) {
+	now := time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC)
+	client := &fakeRulesClient{status: controlclient.RulesStatus{Rules: []controlclient.RuleStatus{
+		{Mode: "Coding", Rule: "Dock", TotalExecutions: 3},
+		{Mode: "Coding", Rule: "Throttle", TotalExecutions: 5, Disabled: true, DisabledReason: "throttle", DisabledSince: now},
+	}}}
+	var buf bytes.Buffer
+	if err := runRules(context.Background(), client, []string{"status"}, &buf); err != nil {
+		t.Fatalf("runRules returned error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Rule counters:") {
+		t.Fatalf("expected counters header in output: %q", output)
+	}
+	if !strings.Contains(output, "[Coding] Dock: total=3") {
+		t.Fatalf("missing dock counter: %q", output)
+	}
+	if !strings.Contains(output, "Disabled rules:") {
+		t.Fatalf("expected disabled section: %q", output)
+	}
+	if !strings.Contains(output, now.Format(time.RFC3339)) {
+		t.Fatalf("expected disabled timestamp in output: %q", output)
+	}
+}
+
+func TestRunRulesStatusError(t *testing.T) {
+	client := &fakeRulesClient{statusErr: fmt.Errorf("boom")}
+	var buf bytes.Buffer
+	if err := runRules(context.Background(), client, []string{"status"}, &buf); err == nil {
+		t.Fatalf("expected error from runRules")
+	}
+}
+
+func TestRunRulesEnable(t *testing.T) {
+	client := &fakeRulesClient{}
+	var buf bytes.Buffer
+	if err := runRules(context.Background(), client, []string{"enable", "Coding", "Dock"}, &buf); err != nil {
+		t.Fatalf("runRules enable returned error: %v", err)
+	}
+	if client.lastMode != "Coding" || client.lastRule != "Dock" {
+		t.Fatalf("unexpected mode/rule captured: mode=%q rule=%q", client.lastMode, client.lastRule)
+	}
+	if !strings.Contains(buf.String(), "Rule Dock re-enabled in mode Coding") {
+		t.Fatalf("missing enable confirmation: %q", buf.String())
+	}
+}
+
+func TestRunRulesEnableErrors(t *testing.T) {
+	client := &fakeRulesClient{enableErr: fmt.Errorf("boom")}
+	var buf bytes.Buffer
+	if err := runRules(context.Background(), client, []string{"enable", "Coding", "Dock"}, &buf); err == nil {
+		t.Fatalf("expected enable error")
+	}
+	if err := runRules(context.Background(), client, []string{"enable", "Coding"}, &buf); err == nil {
+		t.Fatalf("expected argument error")
+	}
+	if err := runRules(context.Background(), client, nil, &buf); err == nil {
+		t.Fatalf("expected missing subcommand error")
+	}
+	if err := runRules(context.Background(), client, []string{"unknown"}, &buf); err == nil {
+		t.Fatalf("expected unknown subcommand error")
 	}
 }

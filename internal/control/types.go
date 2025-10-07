@@ -20,6 +20,8 @@ const (
 	ActionPlan         = "plan"
 	ActionInspect      = "inspect" // legacy alias for inspector.get
 	ActionInspectorGet = "inspector.get"
+	ActionRulesStatus  = "rules.status"
+	ActionRuleEnable   = "rules.enable"
 
 	// Response statuses.
 	StatusOK    = "ok"
@@ -71,6 +73,23 @@ type InspectorSnapshot struct {
 	Mode    ModeStatus       `json:"mode"`
 	World   *state.World     `json:"world"`
 	History []RuleEvaluation `json:"history,omitempty"`
+}
+
+// RuleStatus describes a rule's execution counters and disablement state as exposed over the
+// control API.
+type RuleStatus struct {
+	Mode             string      `json:"mode"`
+	Rule             string      `json:"rule"`
+	TotalExecutions  int         `json:"totalExecutions"`
+	RecentExecutions []time.Time `json:"recentExecutions,omitempty"`
+	Disabled         bool        `json:"disabled"`
+	DisabledReason   string      `json:"disabledReason,omitempty"`
+	DisabledSince    time.Time   `json:"disabledSince,omitempty"`
+}
+
+// RulesStatus aggregates the execution state for all loaded rules.
+type RulesStatus struct {
+	Rules []RuleStatus `json:"rules"`
 }
 
 // DefaultSocketPath returns the expected location of the hyprpal control socket.

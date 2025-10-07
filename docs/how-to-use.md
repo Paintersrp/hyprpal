@@ -155,6 +155,17 @@ While the daemon is running:
 
   Empty output indicates no pending actions for the current world state.
 
+- **Inspect and recover rule counters**
+  ```bash
+  hsctl rules status
+  ```
+
+  Disabled rules are grouped separately along with their throttle reason and timestamp. To re-enable one:
+
+  ```bash
+  hsctl rules enable Gaming "Pause layout adjustments"
+  ```
+
 ---
 
 ## 7. Enable the Systemd User Service

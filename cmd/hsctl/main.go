@@ -36,6 +36,7 @@ func run(argv []string) error {
 		fmt.Fprintln(fs.Output(), "  mode get|set [mode]\tmanage active mode")
 		fmt.Fprintln(fs.Output(), "  reload\t\t\ttrigger a live config reload")
 		fmt.Fprintln(fs.Output(), "  plan [--explain]\tshow pending layout actions")
+		fmt.Fprintln(fs.Output(), "  rules status|enable\tdisplay rule counters or re-enable a rule")
 		fmt.Fprintln(fs.Output(), "  tui\t\t\tlaunch the interactive TUI")
 		fmt.Fprintln(fs.Output(), "  check --config <path>\tvalidate a configuration file")
 		fmt.Fprintln(fs.Output())
@@ -78,6 +79,8 @@ func run(argv []string) error {
 		return runReload(ctx, cli)
 	case "plan":
 		return runPlan(ctx, cli, args[1:])
+	case "rules":
+		return runRules(ctx, cli, args[1:], os.Stdout)
 	case "tui":
 		return runTUI(cli)
 	case "check":
@@ -197,4 +200,69 @@ func runTUI(cli *client.Client) error {
 		return err
 	}
 	return nil
+}
+
+type rulesClient interface {
+	RulesStatus(ctx context.Context) (client.RulesStatus, error)
+	EnableRule(ctx context.Context, mode, rule string) error
+}
+
+func runRules(ctx context.Context, cli rulesClient, args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("rules requires a subcommand (status|enable)")
+	}
+	switch args[0] {
+	case "status":
+		status, err := cli.RulesStatus(ctx)
+		if err != nil {
+			return err
+		}
+		printRulesStatus(stdout, status)
+		return nil
+	case "enable":
+		if len(args) < 3 {
+			return fmt.Errorf("rules enable requires <mode> and <rule>")
+		}
+		mode, rule := args[1], args[2]
+		if err := cli.EnableRule(ctx, mode, rule); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Rule %s re-enabled in mode %s\n", rule, mode)
+		return nil
+	default:
+		return fmt.Errorf("unknown rules subcommand %q", args[0])
+	}
+}
+
+func printRulesStatus(w io.Writer, status client.RulesStatus) {
+	if len(status.Rules) == 0 {
+		fmt.Fprintln(w, "No rules registered")
+		return
+	}
+	fmt.Fprintln(w, "Rule counters:")
+	for _, entry := range status.Rules {
+		fmt.Fprintf(w, "  [%s] %s: total=%d\n", entry.Mode, entry.Rule, entry.TotalExecutions)
+	}
+	disabled := make([]client.RuleStatus, 0)
+	for _, entry := range status.Rules {
+		if entry.Disabled {
+			disabled = append(disabled, entry)
+		}
+	}
+	if len(disabled) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Disabled rules:")
+	for _, entry := range disabled {
+		reason := entry.DisabledReason
+		if reason == "" {
+			reason = "disabled"
+		}
+		if !entry.DisabledSince.IsZero() {
+			fmt.Fprintf(w, "  [%s] %s - %s (since %s)\n", entry.Mode, entry.Rule, reason, entry.DisabledSince.Format(time.RFC3339))
+			continue
+		}
+		fmt.Fprintf(w, "  [%s] %s - %s\n", entry.Mode, entry.Rule, reason)
+	}
 }

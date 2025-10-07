@@ -1,0 +1,159 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"net"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/hyprpal/hyprpal/internal/control"
+)
+
+func startTestServer(t *testing.T, handler func(net.Conn)) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "socket")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen on unix socket: %v", err)
+	}
+	go func() {
+		defer ln.Close()
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		handler(conn)
+	}()
+	return path
+}
+
+func TestRulesStatusSuccess(t *testing.T) {
+	now := time.Now().UTC().Round(time.Second)
+	path := startTestServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		var req control.Request
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Action != control.ActionRulesStatus {
+			t.Errorf("unexpected action %q", req.Action)
+			return
+		}
+		resp := control.Response{Status: control.StatusOK, Data: control.RulesStatus{Rules: []control.RuleStatus{{
+			Mode:             "Coding",
+			Rule:             "Dock",
+			TotalExecutions:  3,
+			RecentExecutions: []time.Time{now},
+			Disabled:         true,
+			DisabledReason:   "throttle",
+			DisabledSince:    now,
+		}}}}
+		if err := json.NewEncoder(conn).Encode(resp); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	})
+	cli, err := New(path)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	status, err := cli.RulesStatus(context.Background())
+	if err != nil {
+		t.Fatalf("RulesStatus returned error: %v", err)
+	}
+	if len(status.Rules) != 1 {
+		t.Fatalf("expected one rule status, got %d", len(status.Rules))
+	}
+	got := status.Rules[0]
+	if got.Mode != "Coding" || got.Rule != "Dock" || got.TotalExecutions != 3 {
+		t.Fatalf("unexpected rule status: %#v", got)
+	}
+	if !got.Disabled || got.DisabledReason != "throttle" {
+		t.Fatalf("expected disabled rule with reason, got %#v", got)
+	}
+}
+
+func TestRulesStatusError(t *testing.T) {
+	path := startTestServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		var req control.Request
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Action != control.ActionRulesStatus {
+			t.Errorf("unexpected action %q", req.Action)
+			return
+		}
+		resp := control.Response{Status: control.StatusError, Error: "boom"}
+		_ = json.NewEncoder(conn).Encode(resp)
+	})
+	cli, err := New(path)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := cli.RulesStatus(context.Background()); err == nil {
+		t.Fatalf("expected error from RulesStatus")
+	}
+}
+
+func TestEnableRule(t *testing.T) {
+	path := startTestServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		var req control.Request
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Action != control.ActionRuleEnable {
+			t.Errorf("unexpected action %q", req.Action)
+			return
+		}
+		if req.Params["mode"] != "Coding" || req.Params["rule"] != "Dock" {
+			t.Errorf("unexpected params: %#v", req.Params)
+			return
+		}
+		resp := control.Response{Status: control.StatusOK}
+		_ = json.NewEncoder(conn).Encode(resp)
+	})
+	cli, err := New(path)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if err := cli.EnableRule(context.Background(), "", "Dock"); err == nil {
+		t.Fatalf("expected error for empty mode")
+	}
+	if err := cli.EnableRule(context.Background(), "Coding", ""); err == nil {
+		t.Fatalf("expected error for empty rule")
+	}
+	if err := cli.EnableRule(context.Background(), "Coding", "Dock"); err != nil {
+		t.Fatalf("EnableRule returned error: %v", err)
+	}
+}
+
+func TestEnableRuleServerError(t *testing.T) {
+	path := startTestServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		var req control.Request
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		resp := control.Response{Status: control.StatusError, Error: "unknown rule"}
+		_ = json.NewEncoder(conn).Encode(resp)
+	})
+	cli, err := New(path)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if err := cli.EnableRule(context.Background(), "Coding", "Dock"); err == nil {
+		t.Fatalf("expected error from EnableRule")
+	}
+}
