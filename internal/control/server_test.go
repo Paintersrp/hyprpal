@@ -92,3 +92,135 @@ func TestHandleModeSetTriggersReconcile(t *testing.T) {
 		t.Fatalf("expected reconcile to query world once, got %d", calls)
 	}
 }
+
+func TestHandleRulesStatus(t *testing.T) {
+	hyprctl := &fakeHyprctl{}
+	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
+	modes := []rules.Mode{{Name: "Mode", Rules: []rules.Rule{{Name: "Rule"}}}}
+	eng := engine.New(hyprctl, logger, modes, false, false, layout.Gaps{}, 0, nil)
+	srv, err := NewServer(eng, logger, nil)
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		enc := json.NewEncoder(clientConn)
+		if err := enc.Encode(Request{Action: ActionRulesStatus}); err != nil {
+			t.Errorf("encode request: %v", err)
+			return
+		}
+		dec := json.NewDecoder(clientConn)
+		var resp Response
+		if err := dec.Decode(&resp); err != nil {
+			t.Errorf("decode response: %v", err)
+			return
+		}
+		if resp.Status != StatusOK {
+			t.Errorf("expected ok status, got %s (error=%s)", resp.Status, resp.Error)
+			return
+		}
+		data, err := json.Marshal(resp.Data)
+		if err != nil {
+			t.Errorf("marshal payload: %v", err)
+			return
+		}
+		var status RulesStatus
+		if err := json.Unmarshal(data, &status); err != nil {
+			t.Errorf("unmarshal payload: %v", err)
+			return
+		}
+		if len(status.Rules) != 1 {
+			t.Errorf("expected one rule status, got %d", len(status.Rules))
+			return
+		}
+		if status.Rules[0].Mode != "Mode" || status.Rules[0].Rule != "Rule" {
+			t.Errorf("unexpected rule entry: %#v", status.Rules[0])
+		}
+	}()
+
+	srv.handle(context.Background(), serverConn)
+	<-done
+}
+
+func TestHandleRuleEnableValidation(t *testing.T) {
+	hyprctl := &fakeHyprctl{}
+	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
+	modes := []rules.Mode{{Name: "Mode", Rules: []rules.Rule{{Name: "Rule"}}}}
+	eng := engine.New(hyprctl, logger, modes, false, false, layout.Gaps{}, 0, nil)
+	srv, err := NewServer(eng, logger, nil)
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		enc := json.NewEncoder(clientConn)
+		req := Request{Action: ActionRuleEnable, Params: map[string]any{"mode": ""}}
+		if err := enc.Encode(req); err != nil {
+			t.Errorf("encode request: %v", err)
+			return
+		}
+		dec := json.NewDecoder(clientConn)
+		var resp Response
+		if err := dec.Decode(&resp); err != nil {
+			t.Errorf("decode response: %v", err)
+			return
+		}
+		if resp.Status != StatusError {
+			t.Errorf("expected error status, got %s", resp.Status)
+		}
+	}()
+
+	srv.handle(context.Background(), serverConn)
+	<-done
+}
+
+func TestHandleRuleEnableEngineError(t *testing.T) {
+	hyprctl := &fakeHyprctl{}
+	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
+	modes := []rules.Mode{{Name: "Mode", Rules: []rules.Rule{{Name: "Rule"}}}}
+	eng := engine.New(hyprctl, logger, modes, false, false, layout.Gaps{}, 0, nil)
+	srv, err := NewServer(eng, logger, nil)
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		enc := json.NewEncoder(clientConn)
+		req := Request{Action: ActionRuleEnable, Params: map[string]any{"mode": "Mode", "rule": "Missing"}}
+		if err := enc.Encode(req); err != nil {
+			t.Errorf("encode request: %v", err)
+			return
+		}
+		dec := json.NewDecoder(clientConn)
+		var resp Response
+		if err := dec.Decode(&resp); err != nil {
+			t.Errorf("decode response: %v", err)
+			return
+		}
+		if resp.Status != StatusError {
+			t.Errorf("expected error status, got %s", resp.Status)
+			return
+		}
+		if resp.Error == "" {
+			t.Errorf("expected error message for engine failure")
+		}
+	}()
+
+	srv.handle(context.Background(), serverConn)
+	<-done
+}

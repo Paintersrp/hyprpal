@@ -32,6 +32,10 @@ type (
 	RuleEvaluation = control.RuleEvaluation
 	// InspectorState captures the daemon's inspector payload.
 	InspectorState = control.InspectorSnapshot
+	// RuleStatus mirrors the rule counter payload returned by the daemon.
+	RuleStatus = control.RuleStatus
+	// RulesStatus aggregates rule execution state for all modes.
+	RulesStatus = control.RulesStatus
 )
 
 // New creates a client that connects to the provided socket path. When path is
@@ -92,6 +96,27 @@ func (c *Client) InspectorGet(ctx context.Context) (InspectorState, error) {
 		return InspectorState{}, err
 	}
 	return snapshot, nil
+}
+
+// RulesStatus retrieves the daemon's per-rule counters and disablement state.
+func (c *Client) RulesStatus(ctx context.Context) (RulesStatus, error) {
+	var status RulesStatus
+	if err := c.do(ctx, control.Request{Action: control.ActionRulesStatus}, &status); err != nil {
+		return RulesStatus{}, err
+	}
+	return status, nil
+}
+
+// EnableRule clears throttle state and reenables the specified rule within a mode.
+func (c *Client) EnableRule(ctx context.Context, mode, rule string) error {
+	if mode == "" {
+		return errors.New("mode cannot be empty")
+	}
+	if rule == "" {
+		return errors.New("rule cannot be empty")
+	}
+	params := map[string]any{"mode": mode, "rule": rule}
+	return c.do(ctx, control.Request{Action: control.ActionRuleEnable, Params: params}, nil)
 }
 
 func (c *Client) do(ctx context.Context, req control.Request, out any) error {

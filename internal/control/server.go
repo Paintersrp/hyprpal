@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/state"
@@ -147,6 +148,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		s.handlePlan(ctx, conn, req.Params)
 	case ActionInspectorGet, ActionInspect:
 		s.handleInspectorGet(conn)
+	case ActionRulesStatus:
+		s.handleRulesStatus(conn)
+	case ActionRuleEnable:
+		s.handleRuleEnable(conn, req.Params)
 	default:
 		s.writeError(conn, fmt.Errorf("unknown action %q", req.Action))
 	}
@@ -230,6 +235,40 @@ func (s *Server) handleInspectorGet(conn net.Conn) {
 		}
 	}
 	s.writeOK(conn, snapshot)
+}
+
+func (s *Server) handleRulesStatus(conn net.Conn) {
+	engineStatuses := s.engine.RulesStatus()
+	status := RulesStatus{Rules: make([]RuleStatus, 0, len(engineStatuses))}
+	for _, st := range engineStatuses {
+		entry := RuleStatus{
+			Mode:            st.Mode,
+			Rule:            st.Rule,
+			TotalExecutions: st.TotalExecutions,
+			Disabled:        st.Disabled,
+			DisabledReason:  st.DisabledReason,
+			DisabledSince:   st.DisabledSince,
+		}
+		if len(st.RecentExecutions) > 0 {
+			entry.RecentExecutions = append([]time.Time(nil), st.RecentExecutions...)
+		}
+		status.Rules = append(status.Rules, entry)
+	}
+	s.writeOK(conn, status)
+}
+
+func (s *Server) handleRuleEnable(conn net.Conn, params map[string]any) {
+	mode, _ := params["mode"].(string)
+	rule, _ := params["rule"].(string)
+	if mode == "" || rule == "" {
+		s.writeError(conn, errors.New("mode and rule are required"))
+		return
+	}
+	if err := s.engine.EnableRule(mode, rule); err != nil {
+		s.writeError(conn, err)
+		return
+	}
+	s.writeOK(conn, nil)
 }
 
 func cloneInspectorCommands(cmds [][]string) [][]string {

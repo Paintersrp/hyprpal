@@ -73,6 +73,27 @@ hsctl plan --explain
 
 When no actions are queued, `hsctl` prints `No pending actions`.
 
+### Inspect rule counters and re-enable throttled rules
+
+Audit how often each rule has executed and which ones are currently disabled (for example due to throttle guardrails):
+
+```bash
+hsctl rules status
+# Rule counters:
+#   [Coding] Dock comms: total=42
+#   [Coding] Fullscreen active: total=17
+#
+# Disabled rules:
+#   [Gaming] Pause layout adjustments - disabled (since 2024-05-01T18:30:00Z)
+```
+
+Bring a rule back online once you've investigated the root cause. Pass the mode name followed by the rule name:
+
+```bash
+hsctl rules enable Gaming "Pause layout adjustments"
+# Rule Pause layout adjustments re-enabled in mode Gaming
+```
+
 ## `smoke` world snapshot CLI
 
 `cmd/smoke` is a standalone helper that bootstraps the rule engine with a no-op dispatcher. It loads your configuration, captures a one-off world snapshot with the regular Hyprland queries, prints both structures, and evaluates the active mode to show the pending dispatches alongside the rule that generated them. Use it when iterating on YAML changes outside of Hyprland or when you want to verify predicate logic without letting the daemon mutate windows.
