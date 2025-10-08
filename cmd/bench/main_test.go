@@ -448,8 +448,11 @@ func TestReplayIterationExplainLogs(t *testing.T) {
 	if !strings.Contains(output, "explain iteration 1 event") {
 		t.Fatalf("expected explanation logs, got: %s", output)
 	}
-	if !strings.Contains(output, "\"kind\"") {
-		t.Fatalf("expected predicate trace details in logs, got: %s", output)
+	if !strings.Contains(output, "mode => true") {
+		t.Fatalf("expected predicate trace summary in logs, got: %s", output)
+	}
+	if !strings.Contains(output, "expected=") {
+		t.Fatalf("expected predicate value details in logs, got: %s", output)
 	}
 }
 

@@ -195,7 +195,7 @@ func main() {
 	outputPath := flag.String("output", "-", "write JSON report to file ('-' for stdout)")
 	humanSummary := flag.Bool("human", false, "print a tabular summary alongside the JSON output")
 	eventTracePath := flag.String("event-trace", "", "write per-event timings to file (JSON array, '-' for stdout)")
-	explain := flag.Bool("explain", false, "log matched rule predicate traces for each event during replay")
+	explain := flag.Bool("explain", false, "log matched rule predicate proofs for each event during replay")
 	flag.Parse()
 
 	if *iterations <= 0 {
@@ -379,21 +379,24 @@ func replayIteration(ctx context.Context, fixture benchFixture, cfg *config.Conf
 				}
 				if record.Predicate == nil {
 					if payload != "" {
-						logger.Infof("explain iteration %d event %d (%s %s) rule %s matched (predicate trace unavailable)", iteration, idx+1, ev.Event.Kind, payload, record.Rule)
+						logger.Infof("explain iteration %d event %d (%s %s) rule %s matched (predicate proof unavailable)", iteration, idx+1, ev.Event.Kind, payload, record.Rule)
 					} else {
-						logger.Infof("explain iteration %d event %d (%s) rule %s matched (predicate trace unavailable)", iteration, idx+1, ev.Event.Kind, record.Rule)
+						logger.Infof("explain iteration %d event %d (%s) rule %s matched (predicate proof unavailable)", iteration, idx+1, ev.Event.Kind, record.Rule)
 					}
 					continue
 				}
-				traceJSON, err := json.MarshalIndent(record.Predicate, "", "  ")
-				if err != nil {
-					logger.Warnf("explain iteration %d event %d rule %s: %v", iteration, idx+1, record.Rule, err)
+				summary := rules.SummarizePredicateTrace(record.Predicate)
+				if payload != "" {
+					logger.Infof("explain iteration %d event %d (%s %s) rule %s matched", iteration, idx+1, ev.Event.Kind, payload, record.Rule)
+				} else {
+					logger.Infof("explain iteration %d event %d (%s) rule %s matched", iteration, idx+1, ev.Event.Kind, record.Rule)
+				}
+				if len(summary) == 0 {
+					logger.Infof("  <no predicate details>")
 					continue
 				}
-				if payload != "" {
-					logger.Infof("explain iteration %d event %d (%s %s) rule %s predicate:\n%s", iteration, idx+1, ev.Event.Kind, payload, record.Rule, traceJSON)
-				} else {
-					logger.Infof("explain iteration %d event %d (%s) rule %s predicate:\n%s", iteration, idx+1, ev.Event.Kind, record.Rule, traceJSON)
+				for _, line := range summary {
+					logger.Infof("  %s", line)
 				}
 			}
 			eng.ClearRuleCheckHistory()
