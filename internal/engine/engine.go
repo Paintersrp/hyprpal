@@ -13,6 +13,7 @@ import (
 
 	"github.com/hyprpal/hyprpal/internal/ipc"
 	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/metrics"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
 	"github.com/hyprpal/hyprpal/internal/util"
@@ -65,6 +66,8 @@ type Engine struct {
 	evalLog    *evaluationLog
 	ruleChecks *ruleCheckHistory
 	eventSeq   int
+
+	metrics *metrics.Collector
 
 	tickerFactory func() ticker
 	subscribe     subscribeFunc
@@ -208,6 +211,19 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		},
 		subscribe: ipc.Subscribe,
 	}
+}
+
+// SetMetricsCollector wires a metrics collector used for anonymous telemetry.
+func (e *Engine) SetMetricsCollector(collector *metrics.Collector) {
+	e.metrics = collector
+}
+
+// MetricsSnapshot returns the current telemetry snapshot for the engine.
+func (e *Engine) MetricsSnapshot() metrics.Snapshot {
+	if e.metrics == nil {
+		return metrics.Snapshot{}
+	}
+	return e.metrics.Snapshot()
 }
 
 // ActiveMode returns the currently selected mode name.
@@ -484,6 +500,7 @@ func (e *Engine) evaluateAndApply(world *state.World, now time.Time, log bool, o
 	e.markDebounce(rules, now)
 
 	redact := e.redactTitlesEnabled()
+	collector := e.metrics
 
 	if e.dryRun {
 		for _, cmd := range plan.Commands {
@@ -507,6 +524,11 @@ func (e *Engine) evaluateAndApply(world *state.World, now time.Time, log bool, o
 			})
 		}
 		e.recordRuleEvaluations(rules, now, RuleEvaluationStatusError, err)
+		if collector != nil {
+			for _, pr := range rules {
+				collector.RecordDispatchError(pr.Mode, pr.Name)
+			}
+		}
 		return err
 	}
 	e.applyCooldown(rules, now.Add(1*time.Second))
@@ -523,6 +545,11 @@ func (e *Engine) evaluateAndApply(world *state.World, now time.Time, log bool, o
 		}
 	}
 	e.recordRuleEvaluations(rules, now, RuleEvaluationStatusApplied, nil)
+	if collector != nil {
+		for _, pr := range rules {
+			collector.RecordApplied(pr.Mode, pr.Name)
+		}
+	}
 	return nil
 }
 
@@ -893,6 +920,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool, origin *e
 	gaps := e.gaps
 	tolerance := e.tolerancePx
 	e.mu.Unlock()
+	collector := e.metrics
 	if !ok {
 		if log {
 			e.logger.Warnf("no active mode selected; skipping apply")
@@ -1039,7 +1067,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool, origin *e
 					"commands": rulePlan.Commands,
 				})
 			}
-			planned = append(planned, plannedRule{
+			plannedRuleEntry := plannedRule{
 				Key:       key,
 				Mode:      activeMode,
 				Name:      rule.Name,
@@ -1047,7 +1075,11 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool, origin *e
 				Plan:      rulePlan,
 				Predicate: rules.ClonePredicateTrace(predicateTrace),
 				Actions:   plannedActions,
-			})
+			}
+			planned = append(planned, plannedRuleEntry)
+			if collector != nil {
+				collector.RecordMatch(activeMode, rule.Name)
+			}
 			record.Reason = "matched"
 			e.recordRuleCheck(record)
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/metrics"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
 	"github.com/hyprpal/hyprpal/internal/util"
@@ -170,6 +171,63 @@ func TestHandleRulesStatus(t *testing.T) {
 		}
 		if status.Rules[0].Throttle == nil || len(status.Rules[0].Throttle.Windows) != 1 {
 			t.Errorf("expected throttle windows in response: %#v", status.Rules[0].Throttle)
+		}
+	}()
+
+	srv.handle(context.Background(), serverConn)
+	<-done
+}
+
+func TestHandleMetrics(t *testing.T) {
+	hyprctl := &fakeHyprctl{}
+	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
+	modes := []rules.Mode{{Name: "Mode", Rules: []rules.Rule{{Name: "Rule"}}}}
+	eng := engine.New(hyprctl, logger, modes, false, false, layout.Gaps{}, 0, nil)
+	collector := metrics.NewCollector(true)
+	collector.RecordMatch("Mode", "Rule")
+	collector.RecordApplied("Mode", "Rule")
+	eng.SetMetricsCollector(collector)
+	srv, err := NewServer(eng, logger, nil)
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		enc := json.NewEncoder(clientConn)
+		if err := enc.Encode(Request{Action: ActionMetricsGet}); err != nil {
+			t.Errorf("encode request: %v", err)
+			return
+		}
+		dec := json.NewDecoder(clientConn)
+		var resp Response
+		if err := dec.Decode(&resp); err != nil {
+			t.Errorf("decode response: %v", err)
+			return
+		}
+		if resp.Status != StatusOK {
+			t.Errorf("expected ok status, got %s (error=%s)", resp.Status, resp.Error)
+			return
+		}
+		data, err := json.Marshal(resp.Data)
+		if err != nil {
+			t.Errorf("marshal payload: %v", err)
+			return
+		}
+		var snapshot MetricsSnapshot
+		if err := json.Unmarshal(data, &snapshot); err != nil {
+			t.Errorf("unmarshal metrics: %v", err)
+			return
+		}
+		if !snapshot.Enabled {
+			t.Errorf("expected telemetry enabled")
+		}
+		if snapshot.Totals.Matched != 1 || snapshot.Totals.Applied != 1 {
+			t.Errorf("unexpected totals: %#v", snapshot.Totals)
 		}
 	}()
 

@@ -30,28 +30,30 @@ func newLintError(path, format string, args ...interface{}) LintError {
 
 // Config is the top-level configuration document.
 type Config struct {
-	ManagedWorkspaces []int                    `yaml:"managedWorkspaces"`
-	Modes             []ModeConfig             `yaml:"modes"`
-	RedactTitles      bool                     `yaml:"redactTitles"`
-	Gaps              Gaps                     `yaml:"gaps"`
-	TolerancePx       float64                  `yaml:"tolerancePx"`
-	Profiles          MatcherProfiles          `yaml:"profiles"`
-	ManualReserved    map[string]layout.Insets `yaml:"manualReserved"`
-	toleranceSet      bool                     `yaml:"-"`
+        ManagedWorkspaces []int                    `yaml:"managedWorkspaces"`
+        Modes             []ModeConfig             `yaml:"modes"`
+        RedactTitles      bool                     `yaml:"redactTitles"`
+        Gaps              Gaps                     `yaml:"gaps"`
+        TolerancePx       float64                  `yaml:"tolerancePx"`
+        Profiles          MatcherProfiles          `yaml:"profiles"`
+        ManualReserved    map[string]layout.Insets `yaml:"manualReserved"`
+        Telemetry         TelemetryConfig          `yaml:"telemetry"`
+        toleranceSet      bool                     `yaml:"-"`
 }
 
 // UnmarshalYAML handles deprecated fields while decoding configuration files.
 func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	type rawConfig struct {
-		ManagedWorkspaces []int                    `yaml:"managedWorkspaces"`
-		Modes             []ModeConfig             `yaml:"modes"`
-		RedactTitles      bool                     `yaml:"redactTitles"`
-		Gaps              Gaps                     `yaml:"gaps"`
-		TolerancePx       *float64                 `yaml:"tolerancePx"`
-		LegacyTolerancePx *float64                 `yaml:"placementTolerancePx"`
-		Profiles          MatcherProfiles          `yaml:"profiles"`
-		ManualReserved    map[string]layout.Insets `yaml:"manualReserved"`
-	}
+                ManagedWorkspaces []int                    `yaml:"managedWorkspaces"`
+                Modes             []ModeConfig             `yaml:"modes"`
+                RedactTitles      bool                     `yaml:"redactTitles"`
+                Gaps              Gaps                     `yaml:"gaps"`
+                TolerancePx       *float64                 `yaml:"tolerancePx"`
+                LegacyTolerancePx *float64                 `yaml:"placementTolerancePx"`
+                Profiles          MatcherProfiles          `yaml:"profiles"`
+                ManualReserved    map[string]layout.Insets `yaml:"manualReserved"`
+                Telemetry         TelemetryConfig          `yaml:"telemetry"`
+        }
 
 	var raw rawConfig
 	if err := value.Decode(&raw); err != nil {
@@ -59,11 +61,12 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	c.ManagedWorkspaces = raw.ManagedWorkspaces
-	c.Modes = raw.Modes
-	c.RedactTitles = raw.RedactTitles
-	c.Gaps = raw.Gaps
-	c.Profiles = raw.Profiles
-	c.ManualReserved = raw.ManualReserved
+        c.Modes = raw.Modes
+        c.RedactTitles = raw.RedactTitles
+        c.Gaps = raw.Gaps
+        c.Profiles = raw.Profiles
+        c.ManualReserved = raw.ManualReserved
+        c.Telemetry = raw.Telemetry
 
 	switch {
 	case raw.TolerancePx != nil:
@@ -124,14 +127,19 @@ type MatcherConfig struct {
 
 // Gaps describes inner and outer gaps applied during layout planning.
 type Gaps struct {
-	Inner float64 `yaml:"inner"`
-	Outer float64 `yaml:"outer"`
+        Inner float64 `yaml:"inner"`
+        Outer float64 `yaml:"outer"`
+}
+
+// TelemetryConfig gates anonymous telemetry collection.
+type TelemetryConfig struct {
+        Enabled bool `yaml:"enabled"`
 }
 
 // ModeConfig represents a named mode with a set of rules.
 type ModeConfig struct {
-	Name  string       `yaml:"name"`
-	Rules []RuleConfig `yaml:"rules"`
+        Name  string       `yaml:"name"`
+        Rules []RuleConfig `yaml:"rules"`
 }
 
 // RuleConfig represents a declarative rule with predicates and actions.

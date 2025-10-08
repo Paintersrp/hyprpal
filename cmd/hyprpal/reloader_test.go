@@ -11,6 +11,7 @@ import (
 	"github.com/hyprpal/hyprpal/internal/config"
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/metrics"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
 	"github.com/hyprpal/hyprpal/internal/util"
@@ -89,8 +90,10 @@ modes:
 		Inner: cfg.Gaps.Inner,
 		Outer: cfg.Gaps.Outer,
 	}, cfg.TolerancePx, cfg.ManualReserved)
+	collector := metrics.NewCollector(cfg.Telemetry.Enabled)
+	eng.SetMetricsCollector(collector)
 
-	reloader := newConfigReloader(path, logger, eng, cfg, []byte(initial))
+	reloader := newConfigReloader(path, logger, eng, collector, cfg, []byte(initial))
 
 	if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
 		t.Fatalf("write bad config: %v", err)
@@ -175,8 +178,10 @@ modes:
 		Inner: cfg.Gaps.Inner,
 		Outer: cfg.Gaps.Outer,
 	}, cfg.TolerancePx, cfg.ManualReserved)
+	collector := metrics.NewCollector(cfg.Telemetry.Enabled)
+	eng.SetMetricsCollector(collector)
 
-	reloader := newConfigReloader(path, logger, eng, cfg, []byte(initial))
+	reloader := newConfigReloader(path, logger, eng, collector, cfg, []byte(initial))
 
 	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
 		t.Fatalf("write invalid config: %v", err)

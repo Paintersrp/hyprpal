@@ -40,6 +40,12 @@ type (
 	RuleThrottleWindow = control.RuleThrottleWindow
 	// RulesStatus aggregates rule execution state for all modes.
 	RulesStatus = control.RulesStatus
+	// MetricsSnapshot mirrors the telemetry counters exposed by the daemon.
+	MetricsSnapshot = control.MetricsSnapshot
+	// MetricsTotals exposes aggregated counters per snapshot.
+	MetricsTotals = control.MetricsTotals
+	// MetricsRule captures per-rule telemetry counters.
+	MetricsRule = control.MetricsRule
 )
 
 // New creates a client that connects to the provided socket path. When path is
@@ -109,6 +115,15 @@ func (c *Client) RulesStatus(ctx context.Context) (RulesStatus, error) {
 		return RulesStatus{}, err
 	}
 	return status, nil
+}
+
+// Metrics retrieves the daemon's anonymous telemetry counters.
+func (c *Client) Metrics(ctx context.Context) (MetricsSnapshot, error) {
+	var snapshot MetricsSnapshot
+	if err := c.do(ctx, control.Request{Action: control.ActionMetricsGet}, &snapshot); err != nil {
+		return MetricsSnapshot{}, err
+	}
+	return snapshot, nil
 }
 
 // EnableRule clears throttle state and reenables the specified rule within a mode.

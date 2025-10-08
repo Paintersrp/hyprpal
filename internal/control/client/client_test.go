@@ -110,6 +110,68 @@ func TestRulesStatusError(t *testing.T) {
 	}
 }
 
+func TestMetricsSuccess(t *testing.T) {
+	path := startTestServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		var req control.Request
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Action != control.ActionMetricsGet {
+			t.Errorf("unexpected action %q", req.Action)
+			return
+		}
+		resp := control.Response{Status: control.StatusOK, Data: control.MetricsSnapshot{
+			Enabled: true,
+			Totals:  control.MetricsTotals{Matched: 2, Applied: 1},
+			Rules:   []control.MetricsRule{{Mode: "Mode", Rule: "Rule", Matched: 2, Applied: 1}},
+		}}
+		if err := json.NewEncoder(conn).Encode(resp); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	})
+	cli, err := New(path)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	snapshot, err := cli.Metrics(context.Background())
+	if err != nil {
+		t.Fatalf("Metrics returned error: %v", err)
+	}
+	if !snapshot.Enabled {
+		t.Fatalf("expected telemetry enabled")
+	}
+	if snapshot.Totals.Matched != 2 || snapshot.Totals.Applied != 1 {
+		t.Fatalf("unexpected totals: %#v", snapshot.Totals)
+	}
+	if len(snapshot.Rules) != 1 {
+		t.Fatalf("expected one rule entry, got %d", len(snapshot.Rules))
+	}
+}
+
+func TestMetricsError(t *testing.T) {
+	path := startTestServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		var req control.Request
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		resp := control.Response{Status: control.StatusError, Error: "disabled"}
+		_ = json.NewEncoder(conn).Encode(resp)
+	})
+	cli, err := New(path)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := cli.Metrics(context.Background()); err == nil {
+		t.Fatalf("expected error from Metrics")
+	}
+}
+
 func TestEnableRule(t *testing.T) {
 	path := startTestServer(t, func(conn net.Conn) {
 		defer conn.Close()

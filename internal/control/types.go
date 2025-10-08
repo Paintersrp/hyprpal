@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hyprpal/hyprpal/internal/metrics"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
 )
@@ -23,6 +24,7 @@ const (
 	ActionInspectorGet = "inspector.get"
 	ActionRulesStatus  = "rules.status"
 	ActionRuleEnable   = "rules.enable"
+	ActionMetricsGet   = "metrics.get"
 
 	// Response statuses.
 	StatusOK    = "ok"
@@ -60,6 +62,15 @@ type PlanCommand struct {
 type PlanResult struct {
 	Commands []PlanCommand `json:"commands"`
 }
+
+// MetricsSnapshot mirrors the telemetry counters exposed by the engine.
+type MetricsSnapshot = metrics.Snapshot
+
+// MetricsTotals aliases the aggregated counter totals in a snapshot.
+type MetricsTotals = metrics.Totals
+
+// MetricsRule captures per-rule telemetry counters.
+type MetricsRule = metrics.RuleMetrics
 
 // RuleEvaluation captures a single rule evaluation outcome for the inspector view.
 type RuleEvaluation struct {

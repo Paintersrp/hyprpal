@@ -153,6 +153,8 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		s.handleRulesStatus(conn)
 	case ActionRuleEnable:
 		s.handleRuleEnable(conn, req.Params)
+	case ActionMetricsGet:
+		s.handleMetrics(conn)
 	default:
 		s.writeError(conn, fmt.Errorf("unknown action %q", req.Action))
 	}
@@ -213,6 +215,11 @@ func (s *Server) handlePlan(ctx context.Context, conn net.Conn, params map[strin
 		})
 	}
 	s.writeOK(conn, result)
+}
+
+func (s *Server) handleMetrics(conn net.Conn) {
+	snapshot := s.engine.MetricsSnapshot()
+	s.writeOK(conn, snapshot)
 }
 
 func (s *Server) handleInspectorGet(conn net.Conn) {

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/ipc"
 	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/metrics"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
 	"github.com/hyprpal/hyprpal/internal/util"
@@ -27,6 +29,7 @@ type fakeHyprctl struct {
 	listMonitorsCalls    int
 	activeWorkspaceCalls int
 	activeClientCalls    int
+	dispatchErr          error
 }
 
 type batchHyprctl struct {
@@ -97,6 +100,9 @@ func (f *fakeHyprctl) ActiveClientAddress(context.Context) (string, error) {
 func (f *fakeHyprctl) Dispatch(args ...string) error {
 	copyArgs := append([]string(nil), args...)
 	f.dispatched = append(f.dispatched, copyArgs)
+	if f.dispatchErr != nil {
+		return f.dispatchErr
+	}
 	return nil
 }
 
@@ -164,6 +170,46 @@ func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 	}
 	if len(hypr.dispatched) != 0 {
 		t.Fatalf("expected no dispatches, got %d", len(hypr.dispatched))
+	}
+}
+
+func TestEngineMetricsCollector(t *testing.T) {
+	hypr := &fakeHyprctl{
+		workspaces: []state.Workspace{{ID: 1, Name: "dev", MonitorName: "DP-1"}},
+		monitors:   []state.Monitor{{ID: 1, Name: "DP-1", Rectangle: layout.Rect{Width: 1920, Height: 1080}}},
+	}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelError, &logs)
+	mode := rules.Mode{
+		Name: "Focus",
+		Rules: []rules.Rule{{
+			Name:    "Arrange",
+			When:    func(rules.EvalContext) bool { return true },
+			Actions: []rules.RuleAction{stubRuleAction(layout.Plan{Commands: [][]string{{"dispatch", "arg"}}})},
+		}},
+	}
+	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 0, nil)
+	collector := metrics.NewCollector(true)
+	eng.SetMetricsCollector(collector)
+
+	if err := eng.reconcileAndApply(context.Background()); err != nil {
+		t.Fatalf("reconcileAndApply returned error: %v", err)
+	}
+	snap := collector.Snapshot()
+	if snap.Totals.Matched != 1 || snap.Totals.Applied != 1 || snap.Totals.DispatchErrors != 0 {
+		t.Fatalf("unexpected metrics after apply: %#v", snap.Totals)
+	}
+
+	key := mode.Name + ":" + mode.Rules[0].Name
+	clearCooldown(t, eng, key)
+
+	hypr.dispatchErr = fmt.Errorf("boom")
+	if err := eng.reconcileAndApply(context.Background()); err == nil {
+		t.Fatalf("expected dispatch error")
+	}
+	snap = collector.Snapshot()
+	if snap.Totals.Matched != 2 || snap.Totals.Applied != 1 || snap.Totals.DispatchErrors != 1 {
+		t.Fatalf("unexpected metrics after error: %#v", snap.Totals)
 	}
 }
 
