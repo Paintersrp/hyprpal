@@ -52,6 +52,7 @@ type Engine struct {
 	activeMode     string
 	dryRun         bool
 	redactTitles   bool
+	explain        bool
 	gaps           layout.Gaps
 	tolerancePx    float64
 	manualReserved map[string]layout.Insets
@@ -176,6 +177,7 @@ func New(hyprctl hyprctlClient, logger *util.Logger, modes []rules.Mode, dryRun 
 		activeMode:     active,
 		dryRun:         dryRun,
 		redactTitles:   redactTitles,
+		explain:        false,
 		gaps:           gaps,
 		tolerancePx:    tolerancePx,
 		manualReserved: cloneInsetsMap(manualReserved),
@@ -269,6 +271,13 @@ func (e *Engine) SetManualReserved(manual map[string]layout.Insets) {
 	e.mu.Unlock()
 }
 
+// SetExplain toggles detailed rule-match logging after each apply.
+func (e *Engine) SetExplain(enabled bool) {
+	e.mu.Lock()
+	e.explain = enabled
+	e.mu.Unlock()
+}
+
 func (e *Engine) redactTitlesEnabled() bool {
 	e.mu.Lock()
 	enabled := e.redactTitles
@@ -276,11 +285,48 @@ func (e *Engine) redactTitlesEnabled() bool {
 	return enabled
 }
 
+func (e *Engine) explainEnabled() bool {
+	e.mu.Lock()
+	enabled := e.explain
+	e.mu.Unlock()
+	return enabled
+}
+
+func (e *Engine) flushRuleCheckLogs() {
+	if !e.explainEnabled() {
+		return
+	}
+	records := e.RuleCheckHistory()
+	if len(records) == 0 {
+		return
+	}
+	defer e.ClearRuleCheckHistory()
+	for _, record := range records {
+		if record.Reason != "matched" {
+			continue
+		}
+		var predicateJSON string
+		if record.Predicate != nil {
+			data, err := json.Marshal(record.Predicate)
+			if err != nil {
+				e.logger.Warnf("explain: failed to serialize predicate for %s:%s: %v", record.Mode, record.Rule, err)
+				predicateJSON = "<error>"
+			} else {
+				predicateJSON = string(data)
+			}
+		} else {
+			predicateJSON = "null"
+		}
+		e.logger.Infof("explain: %s:%s matched at %s predicate=%s", record.Mode, record.Rule, record.Timestamp.Format(time.RFC3339Nano), predicateJSON)
+	}
+}
+
 // Run starts the engine loop until context cancellation.
 func (e *Engine) Run(ctx context.Context) error {
 	if err := e.reconcileAndApply(ctx); err != nil {
 		return err
 	}
+	e.flushRuleCheckLogs()
 	tick := e.newTicker()
 	defer tick.Stop()
 
@@ -301,7 +347,9 @@ func (e *Engine) Run(ctx context.Context) error {
 				} else {
 					e.logger.Errorf("periodic reconcile failed: %v", err)
 				}
+				continue
 			}
+			e.flushRuleCheckLogs()
 		case ev, ok := <-events:
 			if !ok {
 				return fmt.Errorf("event stream closed")
@@ -317,6 +365,8 @@ func (e *Engine) Run(ctx context.Context) error {
 			if e.isInteresting(ev.Kind) {
 				if err := e.applyEvent(ctx, ev); err != nil {
 					e.logger.Errorf("incremental apply failed: %v", err)
+				} else {
+					e.flushRuleCheckLogs()
 				}
 			}
 		}
@@ -346,7 +396,11 @@ func (e *Engine) subscribeEvents(ctx context.Context) (<-chan ipc.Event, error) 
 
 // Reconcile triggers a manual world refresh and rule evaluation.
 func (e *Engine) Reconcile(ctx context.Context) error {
-	return e.reconcileAndApply(ctx)
+	if err := e.reconcileAndApply(ctx); err != nil {
+		return err
+	}
+	e.flushRuleCheckLogs()
+	return nil
 }
 
 // reconcileAndApply refreshes the world model and evaluates rules.
