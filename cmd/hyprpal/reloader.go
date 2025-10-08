@@ -9,6 +9,7 @@ import (
 	"github.com/hyprpal/hyprpal/internal/config"
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/metrics"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/util"
 )
@@ -17,15 +18,17 @@ type configReloader struct {
 	path           string
 	logger         *util.Logger
 	engine         *engine.Engine
+	metrics        *metrics.Collector
 	lastConfig     *config.Config
 	lastSerialized []byte
 }
 
-func newConfigReloader(path string, logger *util.Logger, eng *engine.Engine, cfg *config.Config, serialized []byte) *configReloader {
+func newConfigReloader(path string, logger *util.Logger, eng *engine.Engine, metrics *metrics.Collector, cfg *config.Config, serialized []byte) *configReloader {
 	return &configReloader{
 		path:           path,
 		logger:         logger,
 		engine:         eng,
+		metrics:        metrics,
 		lastConfig:     cfg,
 		lastSerialized: append([]byte(nil), serialized...),
 	}
@@ -60,6 +63,9 @@ func (r *configReloader) Reload(ctx context.Context, reason string) error {
 		Outer: cfg.Gaps.Outer,
 	}, cfg.TolerancePx)
 	r.engine.SetManualReserved(cfg.ManualReserved)
+	if r.metrics != nil {
+		r.metrics.SetEnabled(cfg.Telemetry.Enabled)
+	}
 	if err := r.engine.Reconcile(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil

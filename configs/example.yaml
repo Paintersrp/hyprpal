@@ -8,6 +8,8 @@ gaps:
   inner: 8  # pixels between floating windows
   outer: 20 # pixels around monitor edges
 tolerancePx: 2.0 # slack for idempotence checks; set 0 for exact matches
+telemetry:
+  enabled: false # opt-in anonymous counters (set true to enable)
 manualReserved:
   "*":
     top: 0    # defaults applied to all monitors unless overridden below

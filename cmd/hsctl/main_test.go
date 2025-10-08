@@ -99,6 +99,20 @@ func (f *fakeRulesClient) RulesStatus(context.Context) (controlclient.RulesStatu
 	return f.status, nil
 }
 
+type fakeMetricsClient struct {
+	snapshot controlclient.MetricsSnapshot
+	err      error
+	calls    int
+}
+
+func (f *fakeMetricsClient) Metrics(context.Context) (controlclient.MetricsSnapshot, error) {
+	f.calls++
+	if f.err != nil {
+		return controlclient.MetricsSnapshot{}, f.err
+	}
+	return f.snapshot, nil
+}
+
 func (f *fakeRulesClient) EnableRule(_ context.Context, mode, rule string) error {
 	f.lastMode = mode
 	f.lastRule = rule
@@ -169,5 +183,59 @@ func TestRunRulesEnableErrors(t *testing.T) {
 	}
 	if err := runRules(context.Background(), client, []string{"unknown"}, &buf); err == nil {
 		t.Fatalf("expected unknown subcommand error")
+	}
+}
+
+func TestRunMetricsEnabled(t *testing.T) {
+	now := time.Date(2024, time.March, 10, 1, 2, 3, 0, time.UTC)
+	client := &fakeMetricsClient{snapshot: controlclient.MetricsSnapshot{
+		Enabled: true,
+		Started: now,
+		Totals:  controlclient.MetricsTotals{Matched: 3, Applied: 2, DispatchErrors: 1},
+		Rules: []controlclient.MetricsRule{{
+			Mode:           "Coding",
+			Rule:           "Dock",
+			Matched:        2,
+			Applied:        1,
+			DispatchErrors: 1,
+		}},
+	}}
+	var buf bytes.Buffer
+	if err := runMetrics(context.Background(), client, &buf); err != nil {
+		t.Fatalf("runMetrics returned error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Telemetry enabled") {
+		t.Fatalf("expected enabled message, got %q", output)
+	}
+	if !strings.Contains(output, now.Format(time.RFC3339)) {
+		t.Fatalf("expected started timestamp in output: %q", output)
+	}
+	if !strings.Contains(output, "Totals: matched=3 applied=2 dispatchErrors=1") {
+		t.Fatalf("expected totals in output: %q", output)
+	}
+	if !strings.Contains(output, "[Coding] Dock: matched=2 applied=1 dispatchErrors=1") {
+		t.Fatalf("expected per-rule counters: %q", output)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected single Metrics call, got %d", client.calls)
+	}
+}
+
+func TestRunMetricsDisabled(t *testing.T) {
+	client := &fakeMetricsClient{snapshot: controlclient.MetricsSnapshot{Enabled: false}}
+	var buf bytes.Buffer
+	if err := runMetrics(context.Background(), client, &buf); err != nil {
+		t.Fatalf("runMetrics returned error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Telemetry disabled") {
+		t.Fatalf("expected disabled message, got %q", buf.String())
+	}
+}
+
+func TestRunMetricsError(t *testing.T) {
+	client := &fakeMetricsClient{err: fmt.Errorf("boom")}
+	if err := runMetrics(context.Background(), client, &bytes.Buffer{}); err == nil {
+		t.Fatalf("expected metrics error")
 	}
 }

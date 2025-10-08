@@ -17,6 +17,7 @@ import (
 	"github.com/hyprpal/hyprpal/internal/engine"
 	"github.com/hyprpal/hyprpal/internal/ipc"
 	"github.com/hyprpal/hyprpal/internal/layout"
+	"github.com/hyprpal/hyprpal/internal/metrics"
 	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/util"
 )
@@ -57,6 +58,7 @@ func main() {
 	if err != nil {
 		exitErr(fmt.Errorf("compile rules: %w", err))
 	}
+	metricsCollector := metrics.NewCollector(cfg.Telemetry.Enabled)
 	cfgFullPath, err := filepath.Abs(*cfgPath)
 	if err != nil {
 		exitErr(fmt.Errorf("resolve config path: %w", err))
@@ -89,6 +91,7 @@ func main() {
 		Inner: cfg.Gaps.Inner,
 		Outer: cfg.Gaps.Outer,
 	}, cfg.TolerancePx, cfg.ManualReserved)
+	eng.SetMetricsCollector(metricsCollector)
 	eng.SetExplain(*explain)
 	if *startMode != "" {
 		if err := eng.SetMode(*startMode); err != nil {
@@ -99,7 +102,7 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
-	reloader := newConfigReloader(*cfgPath, logger, eng, cfg, rawCfg)
+	reloader := newConfigReloader(*cfgPath, logger, eng, metricsCollector, cfg, rawCfg)
 	reload := func(reason string) error {
 		return reloader.Reload(ctx, reason)
 	}

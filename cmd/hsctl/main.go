@@ -38,6 +38,7 @@ func run(argv []string) error {
 		fmt.Fprintln(fs.Output(), "  reload\t\t\ttrigger a live config reload")
 		fmt.Fprintln(fs.Output(), "  plan [--explain]\tshow pending layout actions")
 		fmt.Fprintln(fs.Output(), "  rules status|enable\tdisplay rule counters or re-enable a rule")
+		fmt.Fprintln(fs.Output(), "  metrics\t\t\tprint anonymous telemetry counters")
 		fmt.Fprintln(fs.Output(), "  tui\t\t\tlaunch the interactive TUI")
 		fmt.Fprintln(fs.Output(), "  check --config <path>\tvalidate a configuration file")
 		fmt.Fprintln(fs.Output())
@@ -82,6 +83,8 @@ func run(argv []string) error {
 		return runPlan(ctx, cli, args[1:])
 	case "rules":
 		return runRules(ctx, cli, args[1:], os.Stdout)
+	case "metrics":
+		return runMetrics(ctx, cli, os.Stdout)
 	case "tui":
 		return runTUI(cli)
 	case "check":
@@ -277,6 +280,10 @@ type rulesClient interface {
 	EnableRule(ctx context.Context, mode, rule string) error
 }
 
+type metricsClient interface {
+	Metrics(ctx context.Context) (client.MetricsSnapshot, error)
+}
+
 func runRules(ctx context.Context, cli rulesClient, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("rules requires a subcommand (status|enable)")
@@ -357,4 +364,31 @@ func formatThrottleSuffix(throttle *client.RuleThrottle) string {
 		return ""
 	}
 	return " (throttle: " + strings.Join(parts, ", ") + ")"
+}
+
+func runMetrics(ctx context.Context, cli metricsClient, stdout io.Writer) error {
+	snapshot, err := cli.Metrics(ctx)
+	if err != nil {
+		return err
+	}
+	if !snapshot.Enabled {
+		fmt.Fprintln(stdout, "Telemetry disabled (set telemetry.enabled: true in config).")
+		return nil
+	}
+	header := "Telemetry enabled"
+	if !snapshot.Started.IsZero() {
+		fmt.Fprintf(stdout, "%s since %s\n", header, snapshot.Started.Format(time.RFC3339))
+	} else {
+		fmt.Fprintln(stdout, header)
+	}
+	fmt.Fprintf(stdout, "Totals: matched=%d applied=%d dispatchErrors=%d\n", snapshot.Totals.Matched, snapshot.Totals.Applied, snapshot.Totals.DispatchErrors)
+	if len(snapshot.Rules) == 0 {
+		fmt.Fprintln(stdout, "No rule activity recorded yet.")
+		return nil
+	}
+	fmt.Fprintln(stdout, "Per-rule counters:")
+	for _, rule := range snapshot.Rules {
+		fmt.Fprintf(stdout, "  [%s] %s: matched=%d applied=%d dispatchErrors=%d\n", rule.Mode, rule.Rule, rule.Matched, rule.Applied, rule.DispatchErrors)
+	}
+	return nil
 }
