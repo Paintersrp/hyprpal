@@ -185,6 +185,13 @@ func runPlan(ctx context.Context, cli *client.Client, args []string) error {
 		return nil
 	}
 	for _, cmd := range result.Commands {
+		if *explain {
+			action := cmd.Action
+			if action == "" {
+				action = "(unknown action)"
+			}
+			fmt.Printf("action: %s\n", action)
+		}
 		fmt.Printf("dispatch: %s\n", strings.Join(cmd.Dispatch, " "))
 		if cmd.Reason != "" {
 			fmt.Printf("  reason: %s\n", cmd.Reason)

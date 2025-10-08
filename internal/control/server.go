@@ -208,6 +208,7 @@ func (s *Server) handlePlan(ctx context.Context, conn net.Conn, params map[strin
 		result.Commands = append(result.Commands, PlanCommand{
 			Dispatch:  cmd.Dispatch,
 			Reason:    cmd.Reason,
+			Action:    cmd.Action,
 			Predicate: rules.ClonePredicateTrace(cmd.Predicate),
 		})
 	}

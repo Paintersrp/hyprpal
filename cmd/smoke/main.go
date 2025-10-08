@@ -98,6 +98,13 @@ func main() {
 	} else {
 		fmt.Println("\n=== Planned Commands ===")
 		for _, cmd := range commands {
+			if *explain {
+				action := cmd.Action
+				if action == "" {
+					action = "(unknown action)"
+				}
+				fmt.Printf("action: %s\n", action)
+			}
 			fmt.Printf("dispatch: %s\n", formatCommand(cmd.Dispatch))
 			if cmd.Reason != "" {
 				fmt.Printf("  reason: %s\n", cmd.Reason)

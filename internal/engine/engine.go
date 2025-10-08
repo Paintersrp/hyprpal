@@ -73,6 +73,11 @@ const (
 	ruleCheckHistoryLimit = 256
 )
 
+type plannedAction struct {
+	Type string
+	Plan layout.Plan
+}
+
 type plannedRule struct {
 	Key       string
 	Mode      string
@@ -80,6 +85,7 @@ type plannedRule struct {
 	Priority  int
 	Plan      layout.Plan
 	Predicate *rules.PredicateTrace
+	Actions   []plannedAction
 }
 
 // PlannedCommand represents a hyprctl dispatch that would be executed for the
@@ -87,6 +93,7 @@ type plannedRule struct {
 type PlannedCommand struct {
 	Dispatch  []string
 	Reason    string
+	Action    string
 	Predicate *rules.PredicateTrace
 }
 
@@ -766,13 +773,31 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 		if explain {
 			reason = fmt.Sprintf("%s:%s", pr.Mode, pr.Name)
 		}
-		for _, cmd := range pr.Plan.Commands {
-			dispatch := append([]string(nil), cmd...)
-			commands = append(commands, PlannedCommand{
-				Dispatch:  dispatch,
-				Reason:    reason,
-				Predicate: rules.ClonePredicateTrace(pr.Predicate),
-			})
+		if len(pr.Actions) == 0 {
+			for _, cmd := range pr.Plan.Commands {
+				dispatch := append([]string(nil), cmd...)
+				commands = append(commands, PlannedCommand{
+					Dispatch:  dispatch,
+					Reason:    reason,
+					Predicate: rules.ClonePredicateTrace(pr.Predicate),
+				})
+			}
+			continue
+		}
+		for _, action := range pr.Actions {
+			actionID := ""
+			if explain {
+				actionID = action.Type
+			}
+			for _, cmd := range action.Plan.Commands {
+				dispatch := append([]string(nil), cmd...)
+				commands = append(commands, PlannedCommand{
+					Dispatch:  dispatch,
+					Reason:    reason,
+					Action:    actionID,
+					Predicate: rules.ClonePredicateTrace(pr.Predicate),
+				})
+			}
 		}
 	}
 	return commands, nil
@@ -908,8 +933,9 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				continue
 			}
 			rulePlan := layout.Plan{}
+			plannedActions := make([]plannedAction, 0, len(rule.Actions))
 			for _, action := range rule.Actions {
-				p, err := action.Plan(rules.ActionContext{
+				p, err := action.Impl.Plan(rules.ActionContext{
 					World:             world,
 					Logger:            e.logger,
 					RuleName:          rule.Name,
@@ -924,6 +950,12 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 					continue
 				}
 				rulePlan.Merge(p)
+				if len(p.Commands) > 0 {
+					plannedActions = append(plannedActions, plannedAction{
+						Type: action.Type,
+						Plan: clonePlan(p),
+					})
+				}
 			}
 			if len(rulePlan.Commands) == 0 {
 				record.Reason = "no-commands"
@@ -968,6 +1000,7 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				Priority:  rule.Priority,
 				Plan:      rulePlan,
 				Predicate: rules.ClonePredicateTrace(predicateTrace),
+				Actions:   plannedActions,
 			})
 			record.Reason = "matched"
 			e.recordRuleCheck(record)
@@ -1009,6 +1042,17 @@ func (e *Engine) combineMonitorInsets(monitors []state.Monitor) map[string]layou
 		return nil
 	}
 	return result
+}
+
+func clonePlan(plan layout.Plan) layout.Plan {
+	if len(plan.Commands) == 0 {
+		return layout.Plan{}
+	}
+	cloned := make([][]string, len(plan.Commands))
+	for i, cmd := range plan.Commands {
+		cloned[i] = append([]string(nil), cmd...)
+	}
+	return layout.Plan{Commands: cloned}
 }
 
 func newRuleCheckHistory(limit int) *ruleCheckHistory {

@@ -182,6 +182,7 @@ func TestPlanIncludesPredicateTrace(t *testing.T) {
 		resp := control.Response{Status: control.StatusOK, Data: control.PlanResult{Commands: []control.PlanCommand{{
 			Dispatch:  []string{"dispatch"},
 			Reason:    "Mode:Rule",
+			Action:    "layout.test",
 			Predicate: &rules.PredicateTrace{Kind: "predicate", Result: true},
 		}}}}
 		if err := json.NewEncoder(conn).Encode(resp); err != nil {
@@ -198,6 +199,9 @@ func TestPlanIncludesPredicateTrace(t *testing.T) {
 	}
 	if len(result.Commands) != 1 {
 		t.Fatalf("expected one command, got %d", len(result.Commands))
+	}
+	if result.Commands[0].Action != "layout.test" {
+		t.Fatalf("expected action in plan result, got %q", result.Commands[0].Action)
 	}
 	if result.Commands[0].Predicate == nil {
 		t.Fatalf("expected predicate trace in plan result")

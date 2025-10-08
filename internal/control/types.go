@@ -52,6 +52,7 @@ type ModeStatus struct {
 type PlanCommand struct {
 	Dispatch  []string              `json:"dispatch"`
 	Reason    string                `json:"reason,omitempty"`
+	Action    string                `json:"action,omitempty"`
 	Predicate *rules.PredicateTrace `json:"predicate,omitempty"`
 }
 
