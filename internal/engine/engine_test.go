@@ -362,6 +362,43 @@ func TestClearRuleCheckHistory(t *testing.T) {
 	}
 }
 
+func TestFlushRuleCheckLogsIncludesEventDetails(t *testing.T) {
+	hypr := &fakeHyprctl{}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	eng := New(hypr, logger, nil, false, false, layout.Gaps{}, 0, nil)
+	eng.SetExplain(true)
+
+	trace := &rules.PredicateTrace{Kind: "predicate", Result: true}
+	eng.recordRuleCheck(RuleCheckRecord{
+		Timestamp:     time.Unix(0, 0).UTC(),
+		Mode:          "Focus",
+		Rule:          "demo",
+		Matched:       true,
+		Reason:        "matched",
+		Predicate:     trace,
+		EventKind:     "openwindow",
+		EventPayload:  "0xABC",
+		EventSequence: 7,
+	})
+
+	eng.flushRuleCheckLogs()
+
+	output := logs.String()
+	if !strings.Contains(output, "explain: event openwindow 0xABC") {
+		t.Fatalf("expected event header in logs, got %q", output)
+	}
+	if !strings.Contains(output, "Focus:demo matched") {
+		t.Fatalf("expected rule match entry in logs, got %q", output)
+	}
+	if !strings.Contains(output, "predicate => true") {
+		t.Fatalf("expected predicate summary in logs, got %q", output)
+	}
+	if got := len(eng.RuleCheckHistory()); got != 0 {
+		t.Fatalf("expected rule check history to be cleared, got %d entries", got)
+	}
+}
+
 func TestEvaluateContinuesWhenHigherPriorityNoOp(t *testing.T) {
 	hypr := &fakeHyprctl{
 		workspaces:      []state.Workspace{{ID: 1, Name: "dev", MonitorName: "HDMI-A-1"}},

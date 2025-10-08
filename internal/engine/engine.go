@@ -64,6 +64,7 @@ type Engine struct {
 	lastWorld  *state.World
 	evalLog    *evaluationLog
 	ruleChecks *ruleCheckHistory
+	eventSeq   int
 
 	tickerFactory func() ticker
 	subscribe     subscribeFunc
@@ -88,6 +89,12 @@ type plannedRule struct {
 	Actions   []plannedAction
 }
 
+type evaluationOrigin struct {
+	Kind     string
+	Payload  string
+	Sequence int
+}
+
 // PlannedCommand represents a hyprctl dispatch that would be executed for the
 // current world snapshot.
 type PlannedCommand struct {
@@ -99,12 +106,15 @@ type PlannedCommand struct {
 
 // RuleCheckRecord captures predicate evaluation outcomes for a single rule.
 type RuleCheckRecord struct {
-	Timestamp time.Time             `json:"timestamp"`
-	Mode      string                `json:"mode"`
-	Rule      string                `json:"rule"`
-	Matched   bool                  `json:"matched"`
-	Reason    string                `json:"reason,omitempty"`
-	Predicate *rules.PredicateTrace `json:"predicate,omitempty"`
+	Timestamp     time.Time             `json:"timestamp"`
+	Mode          string                `json:"mode"`
+	Rule          string                `json:"rule"`
+	Matched       bool                  `json:"matched"`
+	Reason        string                `json:"reason,omitempty"`
+	Predicate     *rules.PredicateTrace `json:"predicate,omitempty"`
+	EventKind     string                `json:"eventKind,omitempty"`
+	EventPayload  string                `json:"eventPayload,omitempty"`
+	EventSequence int                   `json:"eventSequence,omitempty"`
 }
 
 type ruleCheckHistory struct {
@@ -308,18 +318,45 @@ func (e *Engine) flushRuleCheckLogs() {
 		return
 	}
 	defer e.ClearRuleCheckHistory()
+	currentSeq := -1
+	currentKind := ""
+	currentPayload := ""
+	loggedHeader := false
+
+	logHeader := func(kind, payload string) {
+		if kind != "" {
+			if payload != "" {
+				e.logger.Infof("explain: event %s %s", kind, payload)
+			} else {
+				e.logger.Infof("explain: event %s", kind)
+			}
+		} else {
+			e.logger.Infof("explain: evaluation matched (no triggering event)")
+		}
+	}
+
 	for _, record := range records {
 		if record.Reason != "matched" {
 			continue
 		}
+		seq := record.EventSequence
+		kind := record.EventKind
+		payload := record.EventPayload
+		if !loggedHeader || seq != currentSeq || kind != currentKind || payload != currentPayload {
+			currentSeq = seq
+			currentKind = kind
+			currentPayload = payload
+			loggedHeader = true
+			logHeader(kind, payload)
+		}
 		timestamp := record.Timestamp.Format(time.RFC3339Nano)
 		if record.Predicate == nil {
-			e.logger.Infof("explain: %s:%s matched at %s (no predicate trace)", record.Mode, record.Rule, timestamp)
+			e.logger.Infof("  %s:%s matched at %s (predicate trace unavailable)", record.Mode, record.Rule, timestamp)
 			continue
 		}
-		e.logger.Infof("explain: %s:%s matched at %s", record.Mode, record.Rule, timestamp)
+		e.logger.Infof("  %s:%s matched at %s", record.Mode, record.Rule, timestamp)
 		for _, line := range rules.SummarizePredicateTrace(record.Predicate) {
-			e.logger.Infof("  %s", line)
+			e.logger.Infof("    %s", line)
 		}
 	}
 }
@@ -428,11 +465,14 @@ func (e *Engine) reconcileAndApply(ctx context.Context) error {
 		"activeClient":    world.ActiveClientAddress,
 		"delta":           worldDelta(prev, world),
 	})
-	return e.evaluateAndApply(world, time.Now(), true)
+	return e.evaluateAndApply(world, time.Now(), true, nil)
 }
 
-func (e *Engine) evaluateAndApply(world *state.World, now time.Time, log bool) error {
-	plan, rules := e.evaluate(world, now, log)
+func (e *Engine) evaluateAndApply(world *state.World, now time.Time, log bool, origin *evaluationOrigin) error {
+	if origin != nil && origin.Sequence == 0 {
+		origin.Sequence = e.nextEventSequence()
+	}
+	plan, rules := e.evaluate(world, now, log, origin)
 	e.trace("plan.aggregated", map[string]any{
 		"commandCount": len(plan.Commands),
 		"commands":     plan.Commands,
@@ -515,7 +555,12 @@ func (e *Engine) applyEvent(ctx context.Context, ev ipc.Event) error {
 		"event": ev.Kind,
 		"delta": delta,
 	})
-	return e.evaluateAndApply(world, time.Now(), true)
+	payload := ev.Payload
+	if e.redactTitlesEnabled() && payload != "" {
+		payload = redactedTitle
+	}
+	origin := &evaluationOrigin{Kind: ev.Kind, Payload: payload}
+	return e.evaluateAndApply(world, time.Now(), true, origin)
 }
 
 func (e *Engine) mutateWorldLocked(world *state.World, ev ipc.Event) (bool, error) {
@@ -762,7 +807,7 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 	e.lastWorld = world
 	e.mu.Unlock()
 
-	_, plannedRules := e.evaluate(world, time.Now(), false)
+	_, plannedRules := e.evaluate(world, time.Now(), false, nil)
 	commands := make([]PlannedCommand, 0)
 	for _, pr := range plannedRules {
 		reason := ""
@@ -841,7 +886,7 @@ func (e *Engine) ClearRuleCheckHistory() {
 	e.ruleChecks.clear()
 }
 
-func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.Plan, []plannedRule) {
+func (e *Engine) evaluate(world *state.World, now time.Time, log bool, origin *evaluationOrigin) (layout.Plan, []plannedRule) {
 	e.mu.Lock()
 	activeMode := e.activeMode
 	mode, ok := e.modes[activeMode]
@@ -898,6 +943,11 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				Rule:      rule.Name,
 				Matched:   matched,
 				Predicate: predicateTrace,
+			}
+			if origin != nil {
+				record.EventKind = origin.Kind
+				record.EventPayload = origin.Payload
+				record.EventSequence = origin.Sequence
 			}
 			if disabledReason != "" {
 				if log {
@@ -1098,11 +1148,14 @@ func (h *ruleCheckHistory) clear() {
 
 func cloneRuleCheckRecord(record RuleCheckRecord) RuleCheckRecord {
 	cloned := RuleCheckRecord{
-		Timestamp: record.Timestamp,
-		Mode:      record.Mode,
-		Rule:      record.Rule,
-		Matched:   record.Matched,
-		Reason:    record.Reason,
+		Timestamp:     record.Timestamp,
+		Mode:          record.Mode,
+		Rule:          record.Rule,
+		Matched:       record.Matched,
+		Reason:        record.Reason,
+		EventKind:     record.EventKind,
+		EventPayload:  record.EventPayload,
+		EventSequence: record.EventSequence,
 	}
 	if record.Predicate != nil {
 		cloned.Predicate = rules.ClonePredicateTrace(record.Predicate)
@@ -1128,6 +1181,13 @@ func (e *Engine) recordRuleCheck(record RuleCheckRecord) {
 	e.mu.Lock()
 	e.ruleChecks.add(record)
 	e.mu.Unlock()
+}
+
+func (e *Engine) nextEventSequence() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.eventSeq++
+	return e.eventSeq
 }
 
 func (e *Engine) getRuleStateLocked(key string) *ruleExecutionState {
