@@ -112,7 +112,7 @@ func TestRunRulesStatus(t *testing.T) {
 			FiringLimit: 3,
 			WindowMs:    2000,
 		}}}},
-		{Mode: "Coding", Rule: "Throttle", TotalExecutions: 5, Disabled: true, DisabledReason: "throttle", DisabledSince: now},
+		{Mode: "Coding", Rule: "Throttle", TotalExecutions: 5, Disabled: true, DisabledReason: "disabled (throttle: 5 in 2s)", DisabledSince: now},
 	}}}
 	var buf bytes.Buffer
 	if err := runRules(context.Background(), client, []string{"status"}, &buf); err != nil {
