@@ -84,7 +84,7 @@ hsctl rules status
 #   [Coding] Fullscreen active: total=17
 #
 # Disabled rules:
-#   [Gaming] Pause layout adjustments - disabled (since 2024-05-01T18:30:00Z)
+#   [Gaming] Pause layout adjustments - disabled (throttle: 3 in 2s since 2024-05-01T18:30:00Z)
 ```
 
 Bring a rule back online once you've investigated the root cause. Pass the mode name followed by the rule name:

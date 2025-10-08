@@ -870,16 +870,12 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				}
 				if log {
 					if disabledNow && rule.Throttle != nil {
-						limit := 0
-						windowDur := time.Duration(0)
-						if window != nil {
-							limit = window.FiringLimit
-							windowDur = window.Window
-						} else if len(rule.Throttle.Windows) > 0 {
-							limit = rule.Throttle.Windows[0].FiringLimit
-							windowDur = rule.Throttle.Windows[0].Window
+						limit, windowDur := throttleWindowSummary(rule.Throttle, window)
+						if limit > 0 && windowDur > 0 {
+							e.logger.Warnf("rule %s disabled after exceeding throttle limit (%d within %s) [mode %s]", rule.Name, limit, windowDur, activeMode)
+						} else {
+							e.logger.Warnf("rule %s disabled after exceeding throttle limit [mode %s]", rule.Name, activeMode)
 						}
-						e.logger.Warnf("rule %s disabled after exceeding throttle limit (%d within %s) [mode %s]", rule.Name, limit, windowDur, activeMode)
 					} else {
 						e.logger.Infof("rule %s skipped (%s) [mode %s]", rule.Name, reason, activeMode)
 					}
@@ -1039,8 +1035,9 @@ func (e *Engine) recordRuleExecution(ruleKey string, when time.Time, throttle *r
 		if window := exceededThrottleWindow(throttle, state.recent, when); window != nil {
 			state.disabled = true
 			state.disabledSince = when
-			state.disabledReason = "disabled (throttle)"
-			return false, state.disabledReason, true, window
+			reason := throttleDisabledReason(throttle, window)
+			state.disabledReason = reason
+			return false, reason, true, window
 		}
 	}
 	state.total++
@@ -1048,6 +1045,29 @@ func (e *Engine) recordRuleExecution(ruleKey string, when time.Time, throttle *r
 		state.recent = append(state.recent, when)
 	}
 	return true, "", false, nil
+}
+
+func throttleDisabledReason(throttle *rules.RuleThrottle, window *rules.RuleThrottleWindow) string {
+	limit, windowDur := throttleWindowSummary(throttle, window)
+	if limit > 0 && windowDur > 0 {
+		return fmt.Sprintf("disabled (throttle: %d in %s)", limit, windowDur)
+	}
+	return "disabled (throttle)"
+}
+
+func throttleWindowSummary(throttle *rules.RuleThrottle, window *rules.RuleThrottleWindow) (int, time.Duration) {
+	if window != nil && window.FiringLimit > 0 && window.Window > 0 {
+		return window.FiringLimit, window.Window
+	}
+	if throttle != nil {
+		for i := range throttle.Windows {
+			candidate := throttle.Windows[i]
+			if candidate.FiringLimit > 0 && candidate.Window > 0 {
+				return candidate.FiringLimit, candidate.Window
+			}
+		}
+	}
+	return 0, 0
 }
 
 func exceededThrottleWindow(throttle *rules.RuleThrottle, recent []time.Time, now time.Time) *rules.RuleThrottleWindow {

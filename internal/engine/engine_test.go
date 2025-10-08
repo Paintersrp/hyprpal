@@ -534,7 +534,7 @@ func TestRuleThrottleDisablesAfterLimit(t *testing.T) {
 	records := eng.RuleCheckHistory()
 	seenDisabled := false
 	for _, rec := range records {
-		if rec.Rule == rule.Name && rec.Reason == "disabled (throttle)" {
+		if rec.Rule == rule.Name && rec.Reason == "disabled (throttle: 2 in 10s)" {
 			seenDisabled = true
 			break
 		}
@@ -552,7 +552,7 @@ func TestRuleThrottleDisablesAfterLimit(t *testing.T) {
 			if st.TotalExecutions != 2 {
 				t.Fatalf("expected total executions 2, got %d", st.TotalExecutions)
 			}
-			if st.DisabledReason != "disabled (throttle)" {
+			if st.DisabledReason != "disabled (throttle: 2 in 10s)" {
 				t.Fatalf("unexpected disabled reason: %#v", st)
 			}
 			return
@@ -601,7 +601,7 @@ func TestRuleThrottleDisablesOnSecondaryWindow(t *testing.T) {
 			if !st.Disabled {
 				t.Fatalf("expected rule to be disabled after hitting secondary window, got %#v", st)
 			}
-			if st.DisabledReason != "disabled (throttle)" {
+			if st.DisabledReason != "disabled (throttle: 3 in 2s)" {
 				t.Fatalf("unexpected disabled reason: %#v", st)
 			}
 			if st.TotalExecutions != 3 {
