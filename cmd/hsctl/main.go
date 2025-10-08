@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/hyprpal/hyprpal/internal/config"
 	"github.com/hyprpal/hyprpal/internal/control/client"
+	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/ui/tui"
 )
 
@@ -201,7 +201,7 @@ func runPlan(ctx context.Context, cli *client.Client, args []string) error {
 
 	type ruleGroup struct {
 		Name      string
-		Predicate any
+		Predicate *rules.PredicateTrace
 		Actions   []*actionGroup
 		index     map[string]int
 	}
@@ -239,9 +239,14 @@ func runPlan(ctx context.Context, cli *client.Client, args []string) error {
 	for i, group := range groups {
 		fmt.Printf("rule: %s\n", group.Name)
 		if group.Predicate != nil {
-			fmt.Println("  predicate:")
-			if err := printIndentedJSON(group.Predicate, "    "); err != nil {
-				return fmt.Errorf("format predicate: %w", err)
+			fmt.Println("  predicate proof:")
+			lines := rules.SummarizePredicateTrace(group.Predicate)
+			if len(lines) == 0 {
+				fmt.Println("    (no predicate details)")
+			} else {
+				for _, line := range lines {
+					fmt.Printf("    %s\n", line)
+				}
 			}
 		}
 		for _, action := range group.Actions {
@@ -263,18 +268,6 @@ func runTUI(cli *client.Client) error {
 	renderer := tui.New(cli, os.Stdout)
 	if err := renderer.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
-	}
-	return nil
-}
-
-func printIndentedJSON(v any, indent string) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		fmt.Printf("%s%s\n", indent, line)
 	}
 	return nil
 }
