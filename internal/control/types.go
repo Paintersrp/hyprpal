@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hyprpal/hyprpal/internal/rules"
 	"github.com/hyprpal/hyprpal/internal/state"
 )
 
@@ -49,8 +50,9 @@ type ModeStatus struct {
 
 // PlanCommand represents a single hyprctl dispatch planned by the daemon.
 type PlanCommand struct {
-	Dispatch []string `json:"dispatch"`
-	Reason   string   `json:"reason,omitempty"`
+	Dispatch  []string              `json:"dispatch"`
+	Reason    string                `json:"reason,omitempty"`
+	Predicate *rules.PredicateTrace `json:"predicate,omitempty"`
 }
 
 // PlanResult captures the commands returned by the daemon when planning.

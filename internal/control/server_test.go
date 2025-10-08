@@ -52,6 +52,14 @@ func (f *fakeHyprctl) calls() int {
 	return f.listClientCalls
 }
 
+type stubAction struct {
+	plan layout.Plan
+}
+
+func (a stubAction) Plan(rules.ActionContext) (layout.Plan, error) {
+	return a.plan, nil
+}
+
 func TestHandleModeSetTriggersReconcile(t *testing.T) {
 	hyprctl := &fakeHyprctl{}
 	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
@@ -191,6 +199,77 @@ func TestHandleRuleEnableValidation(t *testing.T) {
 		}
 		if resp.Status != StatusError {
 			t.Errorf("expected error status, got %s", resp.Status)
+		}
+	}()
+
+	srv.handle(context.Background(), serverConn)
+	<-done
+}
+
+func TestHandlePlanIncludesPredicate(t *testing.T) {
+	hyprctl := &fakeHyprctl{}
+	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
+	var plan layout.Plan
+	plan.Add("dispatch", "arg")
+	modes := []rules.Mode{{
+		Name: "Mode",
+		Rules: []rules.Rule{{
+			Name:   "Rule",
+			When:   func(rules.EvalContext) bool { return true },
+			Tracer: &rules.PredicateTracer{},
+			Actions: []rules.Action{
+				stubAction{plan: plan},
+			},
+		}},
+	}}
+	eng := engine.New(hyprctl, logger, modes, false, false, layout.Gaps{}, 0, nil)
+	srv, err := NewServer(eng, logger, nil)
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		enc := json.NewEncoder(clientConn)
+		req := Request{Action: ActionPlan, Params: map[string]any{"explain": true}}
+		if err := enc.Encode(req); err != nil {
+			t.Errorf("encode request: %v", err)
+			return
+		}
+		dec := json.NewDecoder(clientConn)
+		var resp Response
+		if err := dec.Decode(&resp); err != nil {
+			t.Errorf("decode response: %v", err)
+			return
+		}
+		if resp.Status != StatusOK {
+			t.Errorf("expected ok status, got %s (error=%s)", resp.Status, resp.Error)
+			return
+		}
+		data, err := json.Marshal(resp.Data)
+		if err != nil {
+			t.Errorf("marshal payload: %v", err)
+			return
+		}
+		var result PlanResult
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Errorf("unmarshal payload: %v", err)
+			return
+		}
+		if len(result.Commands) != 1 {
+			t.Errorf("expected one command, got %d", len(result.Commands))
+			return
+		}
+		if result.Commands[0].Predicate == nil {
+			t.Errorf("expected predicate trace in response")
+			return
+		}
+		if result.Commands[0].Predicate.Kind != "predicate" {
+			t.Errorf("unexpected predicate kind: %#v", result.Commands[0].Predicate)
 		}
 	}()
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hyprpal/hyprpal/internal/control"
+	"github.com/hyprpal/hyprpal/internal/rules"
 )
 
 func startTestServer(t *testing.T, handler func(net.Conn)) string {
@@ -162,5 +163,46 @@ func TestEnableRuleServerError(t *testing.T) {
 	}
 	if err := cli.EnableRule(context.Background(), "Coding", "Dock"); err == nil {
 		t.Fatalf("expected error from EnableRule")
+	}
+}
+
+func TestPlanIncludesPredicateTrace(t *testing.T) {
+	path := startTestServer(t, func(conn net.Conn) {
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		var req control.Request
+		if err := dec.Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Action != control.ActionPlan {
+			t.Errorf("unexpected action %q", req.Action)
+			return
+		}
+		resp := control.Response{Status: control.StatusOK, Data: control.PlanResult{Commands: []control.PlanCommand{{
+			Dispatch:  []string{"dispatch"},
+			Reason:    "Mode:Rule",
+			Predicate: &rules.PredicateTrace{Kind: "predicate", Result: true},
+		}}}}
+		if err := json.NewEncoder(conn).Encode(resp); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	})
+	cli, err := New(path)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	result, err := cli.Plan(context.Background(), true)
+	if err != nil {
+		t.Fatalf("Plan returned error: %v", err)
+	}
+	if len(result.Commands) != 1 {
+		t.Fatalf("expected one command, got %d", len(result.Commands))
+	}
+	if result.Commands[0].Predicate == nil {
+		t.Fatalf("expected predicate trace in plan result")
+	}
+	if result.Commands[0].Predicate.Kind != "predicate" {
+		t.Fatalf("unexpected predicate kind: %#v", result.Commands[0].Predicate)
 	}
 }
