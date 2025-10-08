@@ -43,6 +43,14 @@ func (s stubAction) Plan(rules.ActionContext) (layout.Plan, error) {
 	return s.plan, nil
 }
 
+func wrapRuleAction(actionType string, impl rules.Action) rules.RuleAction {
+	return rules.RuleAction{Type: actionType, Impl: impl}
+}
+
+func stubRuleAction(plan layout.Plan) rules.RuleAction {
+	return wrapRuleAction("test.stub", stubAction{plan: plan})
+}
+
 type manualTicker struct {
 	ch chan time.Time
 }
@@ -138,7 +146,7 @@ func TestReconcileAndApplyLogsDebounceSkip(t *testing.T) {
 		Rules: []rules.Rule{{
 			Name:     "noop",
 			When:     func(rules.EvalContext) bool { return true },
-			Actions:  []rules.Action{rules.NoopAction{}},
+			Actions:  []rules.RuleAction{wrapRuleAction("test.noop", rules.NoopAction{})},
 			Debounce: time.Second,
 		}},
 	}
@@ -179,8 +187,8 @@ func TestReconcileSkipsUnmanagedWorkspaceRule(t *testing.T) {
 	rule := rules.Rule{
 		Name: "fullscreen-unmanaged",
 		When: func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{
-			&rules.FullscreenAction{Target: "active"},
+		Actions: []rules.RuleAction{
+			wrapRuleAction("layout.fullscreen", &rules.FullscreenAction{Target: "active"}),
 		},
 		ManagedWorkspaces: map[int]struct{}{1: {}},
 	}
@@ -220,8 +228,8 @@ func TestReconcileMutatesUnmanagedWhenEnabled(t *testing.T) {
 	rule := rules.Rule{
 		Name: "fullscreen-unmanaged",
 		When: func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{
-			&rules.FullscreenAction{Target: "active"},
+		Actions: []rules.RuleAction{
+			wrapRuleAction("layout.fullscreen", &rules.FullscreenAction{Target: "active"}),
 		},
 		ManagedWorkspaces: map[int]struct{}{1: {}},
 		MutateUnmanaged:   true,
@@ -262,7 +270,7 @@ func TestReconcileSkipsRulesDuringCooldown(t *testing.T) {
 	rule := rules.Rule{
 		Name:    "cool",
 		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: actPlan}},
+		Actions: []rules.RuleAction{stubRuleAction(actPlan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	eng := New(hypr, logger, []rules.Mode{mode}, false, false, layout.Gaps{}, 2, nil)
@@ -307,13 +315,13 @@ func TestEvaluateStopsAfterHigherPriorityMutations(t *testing.T) {
 			{
 				Name:     "high",
 				When:     func(rules.EvalContext) bool { return true },
-				Actions:  []rules.Action{stubAction{plan: highPlan}},
+				Actions:  []rules.RuleAction{stubRuleAction(highPlan)},
 				Priority: 10,
 			},
 			{
 				Name:     "low",
 				When:     func(rules.EvalContext) bool { return true },
-				Actions:  []rules.Action{stubAction{plan: lowPlan}},
+				Actions:  []rules.RuleAction{stubRuleAction(lowPlan)},
 				Priority: 1,
 			},
 		},
@@ -372,13 +380,13 @@ func TestEvaluateContinuesWhenHigherPriorityNoOp(t *testing.T) {
 			{
 				Name:     "high-noop",
 				When:     func(rules.EvalContext) bool { return true },
-				Actions:  []rules.Action{stubAction{}},
+				Actions:  []rules.RuleAction{stubRuleAction(layout.Plan{})},
 				Priority: 10,
 			},
 			{
 				Name:     "low",
 				When:     func(rules.EvalContext) bool { return true },
-				Actions:  []rules.Action{stubAction{plan: lowPlan}},
+				Actions:  []rules.RuleAction{stubRuleAction(lowPlan)},
 				Priority: 1,
 			},
 		},
@@ -430,7 +438,7 @@ func TestReconcileUsesBatchDispatcherWhenAvailable(t *testing.T) {
 	rule := rules.Rule{
 		Name:    "batch",
 		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
@@ -463,7 +471,7 @@ func TestRuleThrottleAllowsNormalFiring(t *testing.T) {
 	rule := rules.Rule{
 		Name:    "limited",
 		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{{
 			FiringLimit: 3,
 			Window:      10 * time.Second,
@@ -520,7 +528,7 @@ func TestRuleThrottleDisablesAfterLimit(t *testing.T) {
 	rule := rules.Rule{
 		Name:    "limited",
 		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{{
 			FiringLimit: 2,
 			Window:      10 * time.Second,
@@ -590,7 +598,7 @@ func TestRuleThrottleDisablesOnSecondaryWindow(t *testing.T) {
 	rule := rules.Rule{
 		Name:    "limited",
 		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{
 			{FiringLimit: 100, Window: time.Second},
 			{FiringLimit: 3, Window: 2 * time.Second},
@@ -644,7 +652,7 @@ func TestEnableRuleClearsThrottleState(t *testing.T) {
 	rule := rules.Rule{
 		Name:    "limited",
 		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 		Throttle: &rules.RuleThrottle{Windows: []rules.RuleThrottleWindow{{
 			FiringLimit: 1,
 			Window:      10 * time.Second,
@@ -725,7 +733,7 @@ func TestTraceLoggingDryRunSequence(t *testing.T) {
 	rule := rules.Rule{
 		Name:    "match",
 		When:    func(rules.EvalContext) bool { return true },
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
@@ -825,7 +833,7 @@ func TestRedactTitlesToggle(t *testing.T) {
 			}
 			return false
 		},
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	var logs bytes.Buffer
@@ -932,7 +940,7 @@ func TestApplyEventOpenWindowEvaluatesIncrementally(t *testing.T) {
 			}
 			return false
 		},
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	logger := util.NewLogger(util.LevelInfo)
@@ -1040,7 +1048,7 @@ func TestApplyEventMoveWindowWithWorkspaceName(t *testing.T) {
 			}
 			return false
 		},
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	logger := util.NewLogger(util.LevelInfo)
@@ -1110,7 +1118,7 @@ func TestApplyEventWorkspaceWithName(t *testing.T) {
 		When: func(ctx rules.EvalContext) bool {
 			return ctx.World.ActiveWorkspaceID == 2
 		},
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	logger := util.NewLogger(util.LevelInfo)
@@ -1241,7 +1249,7 @@ func TestApplyEventWindowTitleEvaluatesIncrementally(t *testing.T) {
 			}
 			return false
 		},
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	logger := util.NewLogger(util.LevelInfo)
@@ -1331,7 +1339,7 @@ func TestApplyEventCloseWindowEvaluatesIncrementally(t *testing.T) {
 		When: func(ctx rules.EvalContext) bool {
 			return len(ctx.World.Clients) == 0
 		},
-		Actions: []rules.Action{stubAction{plan: plan}},
+		Actions: []rules.RuleAction{stubRuleAction(plan)},
 	}
 	mode := rules.Mode{Name: "Focus", Rules: []rules.Rule{rule}}
 	logger := util.NewLogger(util.LevelInfo)

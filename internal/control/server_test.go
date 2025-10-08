@@ -60,6 +60,14 @@ func (a stubAction) Plan(rules.ActionContext) (layout.Plan, error) {
 	return a.plan, nil
 }
 
+func wrapRuleAction(actionType string, impl rules.Action) rules.RuleAction {
+	return rules.RuleAction{Type: actionType, Impl: impl}
+}
+
+func stubRuleAction(plan layout.Plan) rules.RuleAction {
+	return wrapRuleAction("test.stub", stubAction{plan: plan})
+}
+
 func TestHandleModeSetTriggersReconcile(t *testing.T) {
 	hyprctl := &fakeHyprctl{}
 	logger := util.NewLoggerWithWriter(util.LevelError, io.Discard)
@@ -217,8 +225,8 @@ func TestHandlePlanIncludesPredicate(t *testing.T) {
 			Name:   "Rule",
 			When:   func(rules.EvalContext) bool { return true },
 			Tracer: &rules.PredicateTracer{},
-			Actions: []rules.Action{
-				stubAction{plan: plan},
+			Actions: []rules.RuleAction{
+				stubRuleAction(plan),
 			},
 		}},
 	}}

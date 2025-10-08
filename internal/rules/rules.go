@@ -13,7 +13,7 @@ type Rule struct {
 	Name              string
 	When              Predicate
 	Tracer            *PredicateTracer
-	Actions           []Action
+	Actions           []RuleAction
 	Debounce          time.Duration
 	MutateUnmanaged   bool
 	ManagedWorkspaces map[int]struct{}

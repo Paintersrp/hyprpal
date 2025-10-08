@@ -39,9 +39,15 @@ type Action interface {
 	Plan(ctx ActionContext) (layout.Plan, error)
 }
 
+// RuleAction couples an executable action implementation with its declarative identifier.
+type RuleAction struct {
+	Type string
+	Impl Action
+}
+
 // BuildActions compiles config actions.
-func BuildActions(cfgs []config.ActionConfig, profiles map[string]config.MatcherConfig) ([]Action, error) {
-	actions := make([]Action, 0, len(cfgs))
+func BuildActions(cfgs []config.ActionConfig, profiles map[string]config.MatcherConfig) ([]RuleAction, error) {
+	actions := make([]RuleAction, 0, len(cfgs))
 	for _, ac := range cfgs {
 		switch ac.Type {
 		case "layout.sidecarDock":
@@ -49,22 +55,22 @@ func BuildActions(cfgs []config.ActionConfig, profiles map[string]config.Matcher
 			if err != nil {
 				return nil, fmt.Errorf("sidecarDock: %w", err)
 			}
-			actions = append(actions, action)
+			actions = append(actions, RuleAction{Type: ac.Type, Impl: action})
 		case "layout.fullscreen":
 			action, err := buildFullscreen(ac.Params, profiles)
 			if err != nil {
 				return nil, fmt.Errorf("fullscreen: %w", err)
 			}
-			actions = append(actions, action)
+			actions = append(actions, RuleAction{Type: ac.Type, Impl: action})
 		case "layout.grid":
 			action, err := buildGrid(ac, profiles)
 			if err != nil {
 				return nil, fmt.Errorf("grid: %w", err)
 			}
-			actions = append(actions, action)
+			actions = append(actions, RuleAction{Type: ac.Type, Impl: action})
 		case "layout.ensureWorkspace", "client.pinToWorkspace":
 			// Not implemented in v0.1. Keep as no-op for compatibility.
-			actions = append(actions, NoopAction{})
+			actions = append(actions, RuleAction{Type: ac.Type, Impl: NoopAction{}})
 		default:
 			return nil, fmt.Errorf("unsupported action type %q", ac.Type)
 		}
