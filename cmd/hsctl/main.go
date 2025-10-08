@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -188,6 +189,12 @@ func runPlan(ctx context.Context, cli *client.Client, args []string) error {
 		if cmd.Reason != "" {
 			fmt.Printf("  reason: %s\n", cmd.Reason)
 		}
+		if *explain && cmd.Predicate != nil {
+			fmt.Println("  predicate:")
+			if err := printIndentedJSON(cmd.Predicate, "    "); err != nil {
+				return fmt.Errorf("format predicate: %w", err)
+			}
+		}
 	}
 	return nil
 }
@@ -198,6 +205,18 @@ func runTUI(cli *client.Client) error {
 	renderer := tui.New(cli, os.Stdout)
 	if err := renderer.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
+	}
+	return nil
+}
+
+func printIndentedJSON(v any, indent string) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fmt.Printf("%s%s\n", indent, line)
 	}
 	return nil
 }

@@ -206,8 +206,9 @@ func (s *Server) handlePlan(ctx context.Context, conn net.Conn, params map[strin
 	result := PlanResult{Commands: make([]PlanCommand, 0, len(commands))}
 	for _, cmd := range commands {
 		result.Commands = append(result.Commands, PlanCommand{
-			Dispatch: cmd.Dispatch,
-			Reason:   cmd.Reason,
+			Dispatch:  cmd.Dispatch,
+			Reason:    cmd.Reason,
+			Predicate: rules.ClonePredicateTrace(cmd.Predicate),
 		})
 	}
 	s.writeOK(conn, result)

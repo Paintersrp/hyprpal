@@ -73,18 +73,20 @@ const (
 )
 
 type plannedRule struct {
-	Key      string
-	Mode     string
-	Name     string
-	Priority int
-	Plan     layout.Plan
+	Key       string
+	Mode      string
+	Name      string
+	Priority  int
+	Plan      layout.Plan
+	Predicate *rules.PredicateTrace
 }
 
 // PlannedCommand represents a hyprctl dispatch that would be executed for the
 // current world snapshot.
 type PlannedCommand struct {
-	Dispatch []string
-	Reason   string
+	Dispatch  []string
+	Reason    string
+	Predicate *rules.PredicateTrace
 }
 
 // RuleCheckRecord captures predicate evaluation outcomes for a single rule.
@@ -703,9 +705,9 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 	e.lastWorld = world
 	e.mu.Unlock()
 
-	_, rules := e.evaluate(world, time.Now(), false)
+	_, plannedRules := e.evaluate(world, time.Now(), false)
 	commands := make([]PlannedCommand, 0)
-	for _, pr := range rules {
+	for _, pr := range plannedRules {
 		reason := ""
 		if explain {
 			reason = fmt.Sprintf("%s:%s", pr.Mode, pr.Name)
@@ -713,8 +715,9 @@ func (e *Engine) PreviewPlan(ctx context.Context, explain bool) ([]PlannedComman
 		for _, cmd := range pr.Plan.Commands {
 			dispatch := append([]string(nil), cmd...)
 			commands = append(commands, PlannedCommand{
-				Dispatch: dispatch,
-				Reason:   reason,
+				Dispatch:  dispatch,
+				Reason:    reason,
+				Predicate: rules.ClonePredicateTrace(pr.Predicate),
 			})
 		}
 	}
@@ -895,11 +898,12 @@ func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.P
 				})
 			}
 			planned = append(planned, plannedRule{
-				Key:      key,
-				Mode:     activeMode,
-				Name:     rule.Name,
-				Priority: rule.Priority,
-				Plan:     rulePlan,
+				Key:       key,
+				Mode:      activeMode,
+				Name:      rule.Name,
+				Priority:  rule.Priority,
+				Plan:      rulePlan,
+				Predicate: rules.ClonePredicateTrace(predicateTrace),
 			})
 			record.Reason = "matched"
 			e.recordRuleCheck(record)
