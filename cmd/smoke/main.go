@@ -127,7 +127,7 @@ func main() {
 			fmt.Println()
 			if check.Predicate != nil {
 				if err := marshalJSON(check.Predicate); err != nil {
-					logger.Warnf("failed to print predicate trace for %s: %v", check.Rule, err)
+					logger.Warnf("failed to print predicate proof for %s: %v", check.Rule, err)
 				}
 			}
 		}

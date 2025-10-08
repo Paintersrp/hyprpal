@@ -3,6 +3,7 @@ package rules
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/hyprpal/hyprpal/internal/config"
@@ -435,4 +436,46 @@ func (n *monitorNode) trace(ctx EvalContext) (bool, *PredicateTrace) {
 		result = strings.ToLower(mon.Name) == n.expected
 	}
 	return result, &PredicateTrace{Kind: "monitor.name", Result: result, Details: details}
+}
+
+// SummarizePredicateTrace renders a predicate trace as human-readable lines including captured values.
+func SummarizePredicateTrace(trace *PredicateTrace) []string {
+	if trace == nil {
+		return nil
+	}
+	lines := make([]string, 0)
+	var walk func(prefix string, node *PredicateTrace)
+	walk = func(prefix string, node *PredicateTrace) {
+		if node == nil {
+			return
+		}
+		detail := formatTraceDetails(node.Details)
+		line := fmt.Sprintf("%s%s => %t", prefix, node.Kind, node.Result)
+		if detail != "" {
+			line = fmt.Sprintf("%s %s", line, detail)
+		}
+		lines = append(lines, line)
+		childPrefix := prefix + "  "
+		for _, child := range node.Children {
+			walk(childPrefix, child)
+		}
+	}
+	walk("", trace)
+	return lines
+}
+
+func formatTraceDetails(details map[string]any) string {
+	if len(details) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(details))
+	for key := range details {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", key, details[key]))
+	}
+	return "[" + strings.Join(parts, " ") + "]"
 }

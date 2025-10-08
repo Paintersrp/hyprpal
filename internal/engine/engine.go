@@ -312,19 +312,15 @@ func (e *Engine) flushRuleCheckLogs() {
 		if record.Reason != "matched" {
 			continue
 		}
-		var predicateJSON string
-		if record.Predicate != nil {
-			data, err := json.Marshal(record.Predicate)
-			if err != nil {
-				e.logger.Warnf("explain: failed to serialize predicate for %s:%s: %v", record.Mode, record.Rule, err)
-				predicateJSON = "<error>"
-			} else {
-				predicateJSON = string(data)
-			}
-		} else {
-			predicateJSON = "null"
+		timestamp := record.Timestamp.Format(time.RFC3339Nano)
+		if record.Predicate == nil {
+			e.logger.Infof("explain: %s:%s matched at %s (no predicate trace)", record.Mode, record.Rule, timestamp)
+			continue
 		}
-		e.logger.Infof("explain: %s:%s matched at %s predicate=%s", record.Mode, record.Rule, record.Timestamp.Format(time.RFC3339Nano), predicateJSON)
+		e.logger.Infof("explain: %s:%s matched at %s", record.Mode, record.Rule, timestamp)
+		for _, line := range rules.SummarizePredicateTrace(record.Predicate) {
+			e.logger.Infof("  %s", line)
+		}
 	}
 }
 

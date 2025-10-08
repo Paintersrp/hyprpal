@@ -184,23 +184,74 @@ func runPlan(ctx context.Context, cli *client.Client, args []string) error {
 		fmt.Println("No pending actions")
 		return nil
 	}
-	for _, cmd := range result.Commands {
-		if *explain {
-			action := cmd.Action
-			if action == "" {
-				action = "(unknown action)"
+	if !*explain {
+		for _, cmd := range result.Commands {
+			fmt.Printf("dispatch: %s\n", strings.Join(cmd.Dispatch, " "))
+			if cmd.Reason != "" {
+				fmt.Printf("  reason: %s\n", cmd.Reason)
 			}
-			fmt.Printf("action: %s\n", action)
 		}
-		fmt.Printf("dispatch: %s\n", strings.Join(cmd.Dispatch, " "))
-		if cmd.Reason != "" {
-			fmt.Printf("  reason: %s\n", cmd.Reason)
+		return nil
+	}
+
+	type actionGroup struct {
+		Name     string
+		Commands [][]string
+	}
+
+	type ruleGroup struct {
+		Name      string
+		Predicate any
+		Actions   []*actionGroup
+		index     map[string]int
+	}
+
+	groups := make([]*ruleGroup, 0)
+	ruleIndex := make(map[string]int)
+	for _, cmd := range result.Commands {
+		key := cmd.Reason
+		if key == "" {
+			key = "(unknown rule)"
 		}
-		if *explain && cmd.Predicate != nil {
+		groupPos, exists := ruleIndex[key]
+		if !exists {
+			groups = append(groups, &ruleGroup{Name: key, index: make(map[string]int)})
+			groupPos = len(groups) - 1
+			ruleIndex[key] = groupPos
+		}
+		group := groups[groupPos]
+		if group.Predicate == nil && cmd.Predicate != nil {
+			group.Predicate = cmd.Predicate
+		}
+		actionName := cmd.Action
+		if actionName == "" {
+			actionName = "(rule plan)"
+		}
+		actionPos, ok := group.index[actionName]
+		if !ok {
+			group.Actions = append(group.Actions, &actionGroup{Name: actionName})
+			actionPos = len(group.Actions) - 1
+			group.index[actionName] = actionPos
+		}
+		group.Actions[actionPos].Commands = append(group.Actions[actionPos].Commands, cmd.Dispatch)
+	}
+
+	for i, group := range groups {
+		fmt.Printf("rule: %s\n", group.Name)
+		if group.Predicate != nil {
 			fmt.Println("  predicate:")
-			if err := printIndentedJSON(cmd.Predicate, "    "); err != nil {
+			if err := printIndentedJSON(group.Predicate, "    "); err != nil {
 				return fmt.Errorf("format predicate: %w", err)
 			}
+		}
+		for _, action := range group.Actions {
+			fmt.Printf("  action: %s\n", action.Name)
+			for _, dispatch := range action.Commands {
+				fmt.Printf("    dispatch: %s\n", strings.Join(dispatch, " "))
+			}
+		}
+		if i < len(groups)-1 {
+			fmt.Println()
 		}
 	}
 	return nil
