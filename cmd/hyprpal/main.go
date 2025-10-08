@@ -30,6 +30,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "log level (trace|debug|info|warn|error)")
 	startMode := flag.String("mode", "", "initial mode to activate")
 	dispatchStrategy := flag.String("dispatch", string(ipc.DispatchStrategySocket), "dispatch strategy (socket|hyprctl)")
+	explain := flag.Bool("explain", false, "log matched rule predicates after each event")
 	flag.Parse()
 
 	selectedStrategy := ipc.DispatchStrategy(strings.ToLower(*dispatchStrategy))
@@ -88,6 +89,7 @@ func main() {
 		Inner: cfg.Gaps.Inner,
 		Outer: cfg.Gaps.Outer,
 	}, cfg.TolerancePx, cfg.ManualReserved)
+	eng.SetExplain(*explain)
 	if *startMode != "" {
 		if err := eng.SetMode(*startMode); err != nil {
 			logger.Warnf("failed to set mode %s: %v", *startMode, err)
