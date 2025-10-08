@@ -195,6 +195,7 @@ func main() {
 	outputPath := flag.String("output", "-", "write JSON report to file ('-' for stdout)")
 	humanSummary := flag.Bool("human", false, "print a tabular summary alongside the JSON output")
 	eventTracePath := flag.String("event-trace", "", "write per-event timings to file (JSON array, '-' for stdout)")
+	explain := flag.Bool("explain", false, "log matched rule predicate traces for each event during replay")
 	flag.Parse()
 
 	if *iterations <= 0 {
@@ -263,7 +264,7 @@ func main() {
 
 	if *warmup > 0 {
 		for i := 0; i < *warmup; i++ {
-			if _, _, _, _, err := replayIteration(ctx, fixture, cfg, modes, logger, activeMode, *respectDelays, i+1, false, false); err != nil {
+			if _, _, _, _, err := replayIteration(ctx, fixture, cfg, modes, logger, activeMode, *respectDelays, i+1, false, false, *explain); err != nil {
 				exitErr(fmt.Errorf("warmup iteration %d: %w", i+1, err))
 			}
 		}
@@ -284,7 +285,7 @@ func main() {
 	}
 
 	for i := 0; i < *iterations; i++ {
-		iterationDuration, dispatchCount, eventDurations, traces, err := replayIteration(ctx, fixture, cfg, modes, logger, activeMode, *respectDelays, i+1, true, traceEnabled)
+		iterationDuration, dispatchCount, eventDurations, traces, err := replayIteration(ctx, fixture, cfg, modes, logger, activeMode, *respectDelays, i+1, true, traceEnabled, *explain)
 		if err != nil {
 			exitErr(fmt.Errorf("iteration %d: %w", i+1, err))
 		}
@@ -329,7 +330,7 @@ func main() {
 	}
 }
 
-func replayIteration(ctx context.Context, fixture benchFixture, cfg *config.Config, modes []rules.Mode, logger *util.Logger, activeMode string, respectDelays bool, iteration int, capture bool, trace bool) (time.Duration, int, []time.Duration, []benchEventTrace, error) {
+func replayIteration(ctx context.Context, fixture benchFixture, cfg *config.Config, modes []rules.Mode, logger *util.Logger, activeMode string, respectDelays bool, iteration int, capture bool, trace bool, explain bool) (time.Duration, int, []time.Duration, []benchEventTrace, error) {
 	iterationStart := time.Now()
 	hypr := fixture.newHyprctl()
 	eng := engine.New(hypr, logger, modes, false, cfg.RedactTitles, layout.Gaps{
@@ -345,6 +346,10 @@ func replayIteration(ctx context.Context, fixture benchFixture, cfg *config.Conf
 
 	if err := eng.Reconcile(ctx); err != nil {
 		return 0, 0, nil, nil, fmt.Errorf("initial reconcile: %w", err)
+	}
+
+	if explain {
+		eng.ClearRuleCheckHistory()
 	}
 
 	var eventDurations []time.Duration
@@ -364,6 +369,34 @@ func replayIteration(ctx context.Context, fixture benchFixture, cfg *config.Conf
 		start := time.Now()
 		if err := eng.ApplyEvent(ctx, ev.Event); err != nil {
 			return 0, 0, nil, nil, fmt.Errorf("apply %s: %w", ev.Event.Kind, err)
+		}
+		if explain {
+			records := eng.RuleCheckHistory()
+			payload := strings.TrimSpace(ev.Event.Payload)
+			for _, record := range records {
+				if !record.Matched {
+					continue
+				}
+				if record.Predicate == nil {
+					if payload != "" {
+						logger.Infof("explain iteration %d event %d (%s %s) rule %s matched (predicate trace unavailable)", iteration, idx+1, ev.Event.Kind, payload, record.Rule)
+					} else {
+						logger.Infof("explain iteration %d event %d (%s) rule %s matched (predicate trace unavailable)", iteration, idx+1, ev.Event.Kind, record.Rule)
+					}
+					continue
+				}
+				traceJSON, err := json.MarshalIndent(record.Predicate, "", "  ")
+				if err != nil {
+					logger.Warnf("explain iteration %d event %d rule %s: %v", iteration, idx+1, record.Rule, err)
+					continue
+				}
+				if payload != "" {
+					logger.Infof("explain iteration %d event %d (%s %s) rule %s predicate:\n%s", iteration, idx+1, ev.Event.Kind, payload, record.Rule, traceJSON)
+				} else {
+					logger.Infof("explain iteration %d event %d (%s) rule %s predicate:\n%s", iteration, idx+1, ev.Event.Kind, record.Rule, traceJSON)
+				}
+			}
+			eng.ClearRuleCheckHistory()
 		}
 		elapsed := time.Since(start)
 		if capture {
