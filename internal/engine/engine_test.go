@@ -337,6 +337,23 @@ func TestEvaluateStopsAfterHigherPriorityMutations(t *testing.T) {
 	}
 }
 
+func TestClearRuleCheckHistory(t *testing.T) {
+	hypr := &fakeHyprctl{}
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+	eng := New(hypr, logger, nil, false, false, layout.Gaps{}, 0, nil)
+
+	eng.recordRuleCheck(RuleCheckRecord{Rule: "demo", Matched: true})
+	if got := len(eng.RuleCheckHistory()); got != 1 {
+		t.Fatalf("expected 1 record before clear, got %d", got)
+	}
+
+	eng.ClearRuleCheckHistory()
+	if got := len(eng.RuleCheckHistory()); got != 0 {
+		t.Fatalf("expected no records after clear, got %d", got)
+	}
+}
+
 func TestEvaluateContinuesWhenHigherPriorityNoOp(t *testing.T) {
 	hypr := &fakeHyprctl{
 		workspaces:      []state.Workspace{{ID: 1, Name: "dev", MonitorName: "HDMI-A-1"}},

@@ -756,6 +756,16 @@ func (e *Engine) RuleCheckHistory() []RuleCheckRecord {
 	return e.ruleChecks.snapshot()
 }
 
+// ClearRuleCheckHistory removes any buffered rule evaluation records.
+func (e *Engine) ClearRuleCheckHistory() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ruleChecks == nil {
+		return
+	}
+	e.ruleChecks.clear()
+}
+
 func (e *Engine) evaluate(world *state.World, now time.Time, log bool) (layout.Plan, []plannedRule) {
 	e.mu.Lock()
 	activeMode := e.activeMode
@@ -982,6 +992,14 @@ func (h *ruleCheckHistory) snapshot() []RuleCheckRecord {
 		out[i] = cloneRuleCheckRecord(h.buf[idx])
 	}
 	return out
+}
+
+func (h *ruleCheckHistory) clear() {
+	if h == nil {
+		return
+	}
+	h.start = 0
+	h.count = 0
 }
 
 func cloneRuleCheckRecord(record RuleCheckRecord) RuleCheckRecord {

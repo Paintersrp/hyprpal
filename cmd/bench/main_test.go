@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math"
 	"os"
@@ -10,6 +11,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hyprpal/hyprpal/internal/config"
+	"github.com/hyprpal/hyprpal/internal/rules"
+	"github.com/hyprpal/hyprpal/internal/util"
 )
 
 func TestPercentile(t *testing.T) {
@@ -418,6 +423,33 @@ func TestBuildReport(t *testing.T) {
 	}
 	if math.Abs(iter.DurationMs-10) > 1e-9 {
 		t.Fatalf("expected first iteration duration 10ms, got %f", iter.DurationMs)
+	}
+}
+
+func TestReplayIterationExplainLogs(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "configs", "example.yaml"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	modes, err := rules.BuildModes(cfg)
+	if err != nil {
+		t.Fatalf("build modes: %v", err)
+	}
+
+	fixture := defaultFixture()
+	var logs bytes.Buffer
+	logger := util.NewLoggerWithWriter(util.LevelInfo, &logs)
+
+	if _, _, _, _, err := replayIteration(context.Background(), fixture, cfg, modes, logger, fixture.Mode, false, 1, false, false, true); err != nil {
+		t.Fatalf("replayIteration returned error: %v", err)
+	}
+
+	output := logs.String()
+	if !strings.Contains(output, "explain iteration 1 event") {
+		t.Fatalf("expected explanation logs, got: %s", output)
+	}
+	if !strings.Contains(output, "\"kind\"") {
+		t.Fatalf("expected predicate trace details in logs, got: %s", output)
 	}
 }
 
